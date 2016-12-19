@@ -13,27 +13,6 @@
 
 namespace Tree {
 
-struct Input {
-  Input(int argc, char** argv) : _saveModels(false),
-                                 _oobTests(false),
-                                 _oobPercent(0),
-                                 _nTrees(0),
-                                 _dtp(nullptr) {
-  }
-//make sure _oobPercent >= 0.01 and <= 0.5
-  bool _saveModels;
-  bool _oobTests;
-  double _oobPercent;
-  std::size_t _nTrees;
-  std::string _dataSource;
-  DecisionTreeParameters* _dtp;
-
-  ~Input() {
-    if ( _dtp )
-      delete _dtp;
-  }
-};
-
 inline featureID
 get_features(const std::string& s, char d1, char d2, std::unordered_map<featureID, dtype>& mp) {
   static const std::size_t LabelID = 0;
@@ -70,7 +49,7 @@ get_features(const std::string& s, char d1, char d2, std::unordered_map<featureI
   return maxFeatureLabel;
 }
 
-std::pair<DataMatrix*, DataMatrix*>
+std::pair<DataMatrix*, DataMatrixInv*>
 read_data(const std::string& source, bool oob, double oobPercent) {
   std::ifstream infile(source.c_str());
   if ( !infile )
@@ -97,7 +76,7 @@ read_data(const std::string& source, bool oob, double oobPercent) {
 
   std::size_t modRows = 0, oobRows = 0, oobRowCount = 0;
   const auto finalNCols = nCols;
-  DataMatrix* dmOOB = nullptr;
+  DataMatrixInv* dmOOB = nullptr;
   if ( oob ) {
     oobRows = std::floor(oobPercent * nRows);
     if ( !oobRows )
@@ -123,7 +102,7 @@ read_data(const std::string& source, bool oob, double oobPercent) {
       featureList.clear();
     } // while
     // keep nCols the same between dmOOB and the learning matrix
-    dmOOB = new DataMatrix(oobRows, finalNCols, nNonZeroesOOB);
+    dmOOB = new DataMatrixInv(oobRows, finalNCols, nNonZeroesOOB);
   }
 
   DataMatrix* dm = new DataMatrix(nRows, finalNCols, nNonZeroes);

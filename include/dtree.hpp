@@ -1,3 +1,28 @@
+/*
+  FILE: dtree.hpp
+  AUTHOR: Shane Neph
+  CREATE DATE: Dec.2016
+*/
+
+//
+//    Decision Tree
+//    Copyright (C) 2016-2017 Altius Institute for Biomedical Sciences
+//
+//    This program is free software; you can redistribute it and/or modify
+//    it under the terms of the GNU General Public License as published by
+//    the Free Software Foundation; either version 2 of the License, or
+//    (at your option) any later version.
+//
+//    This program is distributed in the hope that it will be useful,
+//    but WITHOUT ANY WARRANTY; without even the implied warranty of
+//    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//    GNU General Public License for more details.
+//
+//    You should have received a copy of the GNU General Public License along
+//    with this program; if not, write to the Free Software Foundation, Inc.,
+//    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
+
 #ifndef __ALTIUS_DTREE_HPP__
 #define __ALTIUS_DTREE_HPP__
 
@@ -88,10 +113,10 @@ struct DecisionTreeParameters {
                          Criterion c = Criterion::GINI,
                          SplitStrategy s = SplitStrategy::BEST,
                          SplitMaxFeat m = SplitMaxFeat::SQRT,
-                         const SplitType& splitValue = SplitType(),
+                         SplitType splitValue = SplitType(),
                          int maxDepth = 0,
                          int maxLeafNodes = 0,
-                         dtype minSamplesLeaf = 1,
+                         int minSamplesLeaf = 1,
                          dtype minPuritySplit = 0.7,
                          bool useImpliedZeroesInSplitDecision = true,
                          ClassWeightType cw = ClassWeightType::SAME,
@@ -130,6 +155,9 @@ struct DecisionTreeParameters {
         default:
           break;
       }
+
+      if ( _minPuritySplit <= 0.5 )
+        throw std::domain_error("minimum purity setting must be > 0.5");
 
       _enums[toupper("Criterion")] = static_cast<int>(_criterion);
       _enums[toupper("SplitStrategy")] = static_cast<int>(_splitStrategy);
@@ -353,9 +381,9 @@ private:
   Criterion _criterion;
   SplitStrategy _splitStrategy;
   SplitMaxFeat _splitMaxSelect; // if INT, then _selectSplitNumeric > 0.  if FLT, then 0 < _selectSplitNumeric <= 1
-  int _maxDepth; // 0 means expand until all leaves are pure or until all nodes contain less than _minLeafSamples
+  int _maxDepth; // 0 means expand until all leaves meet purity criterion or until all nodes contain less than _minLeafSamples
   int _maxLeafNodes; // 0, then unlimited leaf nodes, else grow a tree until you reach _maxLeafNodes using bfs
-  dtype _minLeafSamples; // if >= 1 - use int(), 0 - error, < 1 - use as percentage
+  int _minLeafSamples; // 0, then not a stopping condition, else done splitting if drops to this level
   dtype _minPuritySplit; // A node will split if its purity is less than the threshold, otherwise it is a leaf
   bool _useImpliedZerosInSplitDecision;
   ClassWeightType _classWeightType;
@@ -399,9 +427,14 @@ allZeroes(const SparseMatrix& m, std::size_t featureCol, Monitor mask) {
 /*
   Hardcoding binary classification for now
 */
-inline dtype
+inline std::tuple<std::size_t, dtype>
 purity(const std::array<dtype, 2>& a) {
-  return (std::max(a[0], a[1])/(a[0]+a[1]));
+  return std::make_pair(a[0]>a[1] ? 0 : 1, std::max(a[0], a[1])/(a[0]+a[1]));
+}
+
+inline label
+majority_decision(const std::array<dtype, 2>& a) {
+  return a[0] > a[1] ? 0 : 1;
 }
 
 /*
@@ -427,10 +460,6 @@ struct DecisionTreeClassifier {
   classify(const RowVector& row) const {
     if ( _nodes.empty() )
       throw std::domain_error("Need to learn a model before you can use one!");
-
-    static constexpr std::size_t PARENT = 0;
-    static constexpr std::size_t LEFTCHILD = 1;
-    static constexpr std::size_t RIGHTCHILD = 2;
 
     auto currCore = std::get<PARENT>(_nodes.back());
     for ( auto iter = _nodes.rbegin(); iter != _nodes.rend(); ) {
@@ -460,6 +489,11 @@ private:
   static constexpr std::size_t LP = 2;
   static constexpr std::size_t RP = 3;
 
+  // Node's Core pointer elements
+  static constexpr std::size_t PARENT = 0;
+  static constexpr std::size_t LEFTCHILD = 1;
+  static constexpr std::size_t RIGHTCHILD = 2;
+
   // Core's elements
   static constexpr std::size_t FID = 0;
   static constexpr std::size_t THOLD = 1;
@@ -485,12 +519,17 @@ protected:
     parentMonitor.set();
 
     // find_split() returns feature ID, split value, a Monitor showing which bits
-    //  'go to the right', left child purity and right child purity
+    //  'go to the right', left child decision&purity and right child decision&purity
     static constexpr std::size_t FID = 0;
     static constexpr std::size_t SPV = 1;
     static constexpr std::size_t MON = 2;
     static constexpr std::size_t LPU = 3;
     static constexpr std::size_t RPU = 4;
+
+    // for sub-tuple of LPU or RPU
+    static constexpr std::size_t DEC = 0;
+    static constexpr std::size_t PUR = 1;
+
 // sjn might make better sense to make the 3 monitors pointers everywhere; test performance later
     const bool noLeaf = false;
     const std::size_t noDecision = std::numeric_limits<std::size_t>::max();
@@ -511,8 +550,10 @@ protected:
     que.push(std::make_tuple(std::get<PARENT_CPTR>(current), leftChildMonitor, rightChildMonitor));
 
     // breadth first traversal
+    std::size_t level = 0, nleaves = 0;
     while ( !que.empty() ) {
       auto& e = que.front();
+      ++level;
       current = Node(std::get<PARENT_CPTR>(e), nullptr, nullptr);
       p = find_split(dm, nSplitFeatures, std::get<LC_MON>(e));
       std::get<LC_CPTR>(current) = new Core(std::get<FID>(p), std::get<SPV>(p), noLeaf, noDecision);
@@ -523,37 +564,40 @@ protected:
       parentMonitor = std::get<LC_MON>(e);
       rightChildMonitor = std::get<MON>(p);
       leftChildMonitor = ~rightChildMonitor & parentMonitor;
-      auto nextl = std::make_tuple(std::get<LC_MON>(current), leftChildMonitor, rightChildMonitor);
+      auto nextl = std::make_tuple(std::get<LC_CPTR>(current), leftChildMonitor, rightChildMonitor);
 
       parentMonitor = std::get<RC_MON>(e);
       rightChildMonitor = std::get<MON>(q);
       leftChildMonitor = ~rightChildMonitor & parentMonitor;
-      auto nextr = std::make_tuple(std::get<RC_MON>(current), leftChildMonitor, rightChildMonitor);
+      auto nextr = std::make_tuple(std::get<RC_CPTR>(current), leftChildMonitor, rightChildMonitor);
 
-//yeah // sjn shouldn't I use std::get<LPU>(p) here and std::get<RPU>(p) ?
-// this needs fixing
-      if ( !done(dm, nextl) )
+      if ( !done(std::get<PUR>(std::get<LPU>(p)), level, nleaves) )
         que.push(nextl);
       else {
-        std::get<ISLEAF>(*std::get<PARENT_CPTR>(current)) = true;
-//        std::get<DEC>(*std::get<PARENT_CPTR>(current)) = majority_vote(...);
+        std::get<ISLEAF>(*std::get<LC_CPTR>(current)) = true;
+        std::get<DEC>(*std::get<LC_CPTR>(current)) = std::get<PUR>(std::get<LPU>(p));
+        ++nleaves;
       }
 
-      if ( !done(dm, nextr) )
+      if ( !done(std::get<PUR>(std::get<RPU>(q)), level, nleaves) )
         que.push(nextr);
       else {
-        std::get<ISLEAF>(*std::get<PARENT_CPTR>(current)) = true;
-//        std::get<DEC>(*std::get<PARENT_CPTR>(current)) = majority_vote(...);
+        std::get<ISLEAF>(*std::get<RC_CPTR>(current)) = true;
+        std::get<DEC>(*std::get<RC_CPTR>(current)) = std::get<PUR>(std::get<RPU>(p));
+        ++nleaves;
       }
 
-      _nodes.push_front(current);
+      _nodes.push_back(current);
       que.pop();
     } // while
   }
 
-  bool
-  done(const DataMatrix& dm, const std::tuple<Core*, Monitor, Monitor>& t) const {
-return true;
+  // may add in _minLeafSamples eventually
+  inline bool
+  done(dtype currPurity, std::size_t level, int maxLeaves) {
+    return (currPurity >= _dtp._minPuritySplit) ||
+           (_dtp._maxDepth && level > _dtp._maxDepth)   ||
+           (_dtp._maxLeafNodes && maxLeaves > _dtp._maxLeafNodes);
   }
 
 public:
@@ -561,16 +605,16 @@ public:
     auto jiter = _nodes.begin();
     if ( jiter != _nodes.end() ) {
       for ( auto iter = _nodes.begin(); iter != _nodes.end(); ) {
-        if ( std::get<0>(*iter) )
-          delete std::get<0>(*iter);
+        if ( std::get<PARENT>(*iter) )
+          delete std::get<PARENT>(*iter);
         if ( ++iter != _nodes.end() )
           ++jiter;
       } // for
 
-      if ( std::get<1>(*jiter) )
-        delete std::get<1>(*jiter);
-      if ( std::get<2>(*jiter) )
-        delete std::get<2>(*jiter);
+      if ( std::get<LEFTCHILD>(*jiter) )
+        delete std::get<LEFTCHILD>(*jiter);
+      if ( std::get<RIGHTCHILD>(*jiter) )
+        delete std::get<RIGHTCHILD>(*jiter);
     }
   }
 
@@ -611,17 +655,17 @@ public:
     if (!input)
       return input;
 
-    DecisionTreeClassifier::FeatureID fid;
-    DecisionTreeClassifier::SplitValue spv;
-    bool ilf;
-    std::size_t decision;
+    DecisionTreeClassifier::FeatureID fid; // feature id?
+    DecisionTreeClassifier::SplitValue spv; // split value?
+    bool ilf; // is leaf?
+    std::size_t dsn; // decision?
 
     std::queue<Core*> que;
     input >> fid;
     input >> spv;
     input >> ilf;
-    input >> decision;
-    Core* parent = new Core(fid, spv, ilf, decision);
+    input >> dsn;
+    Core* parent = new Core(fid, spv, ilf, dsn);
     que.push(parent);
 
     while ( !que.empty() ) {
@@ -632,19 +676,19 @@ public:
         input >> fid;
         input >> spv;
         input >> ilf;
-        input >> decision;
-        left = new Core(fid, spv, ilf, decision);
+        input >> dsn;
+        left = new Core(fid, spv, ilf, dsn);
 
         input >> fid;
         input >> spv;
         input >> ilf;
-        input >> decision;
-        right = new Core(fid, spv, ilf, decision);
+        input >> dsn;
+        right = new Core(fid, spv, ilf, dsn);
 
         que.push(left);
         que.push(right);
       }
-      dtc._nodes.push_front(Node(parent, left, right));
+      dtc._nodes.push_back(Node(parent, left, right));
       que.pop();
     } // while
     return input;
@@ -653,12 +697,14 @@ public:
   friend // write out this model
   std::ostream&
   operator<<(std::ostream& output, const DecisionTreeClassifier& dtc) {
-    constexpr std::size_t PAR = 0;
+    static constexpr std::size_t PAR = dtc.PARENT;
+    static constexpr std::size_t LCHILD = dtc.LEFTCHILD;
+    static constexpr std::size_t RCHILD = dtc.RIGHTCHILD;
 
-    constexpr std::size_t FID = 0;
-    constexpr std::size_t SPV = 1;
-    constexpr std::size_t ILF = 2;
-    constexpr std::size_t DEC = 3;
+    static constexpr std::size_t FID = dtc.FID;
+    static constexpr std::size_t SPV = dtc.THOLD;
+    static constexpr std::size_t ILF = dtc.ISLEAF;
+    static constexpr std::size_t DEC = dtc.DECISION;
 
     output << dtc._dtp << std::endl;
     for ( auto& n : dtc._nodes ) {
@@ -666,6 +712,17 @@ public:
       output << std::get<FID>(parent) << " " << std::get<SPV>(parent) << " "
              << std::get<ILF>(parent) << " " << std::get<DEC>(parent) << std::endl;
     } // for
+
+    Core const* lchild = std::get<LCHILD>(dtc._nodes.back());
+    Core const* rchild = std::get<RCHILD>(dtc._nodes.back());
+
+    if ( lchild )
+      output << std::get<FID>(*lchild) << " " << std::get<SPV>(*lchild) << " "
+             << std::get<ILF>(*lchild) << " " << std::get<DEC>(*lchild) << std::endl;
+
+    if ( rchild )
+      output << std::get<FID>(*rchild) << " " << std::get<SPV>(*rchild) << " "
+             << std::get<ILF>(*rchild) << " " << std::get<DEC>(*rchild) << std::endl;
     return output;
   }
 
@@ -721,12 +778,12 @@ protected:
   //  use const iterators or for-range if not considering implicit (0) feature values
   //    use const: 5.2 at
   //    http://www.boost.org/doc/libs/1_51_0/libs/numeric/ublas/doc/operations_overview.htm#4SubmatricesSubvectors
-  std::tuple<dtype, dtype, dtype, dtype>
+  std::tuple<dtype, dtype, std::tuple<label, dtype>, std::tuple<label, dtype>>
   split_gini(const DataMatrix& dm, std::size_t featColumn, SplitStrategy s, bool includeZeroes) {
     const auto& labels = ub::column(dm, 0);
     const auto& values = ub::column(dm, featColumn);
     auto iter = values.begin(), iter_end = values.end();
-    std::tuple<dtype, dtype, dtype, dtype> rtn(0,0,0,0);
+    std::tuple<dtype, dtype, std::tuple<label, dtype>, std::tuple<label, dtype>> rtn(0,0,std::make_tuple(0,0), std::make_tuple(0,0));
     if ( s == SplitStrategy::BEST ) { // find best value to split on; smallest gini is best
       std::set<dtype> uniq_scores(iter, iter_end);
       if ( includeZeroes )
@@ -788,28 +845,29 @@ protected:
   }
 
   inline
-  std::tuple<dtype, dtype, dtype, dtype> /* quality, split-value, purity-left, purity-right */
+  /* quality, split-value, decision-left/purity-left, decision-right/purity-right */
+  std::tuple<dtype, dtype, std::tuple<label, dtype>, std::tuple<label, dtype>>
   evaluate(const DataMatrix& dm, std::size_t featColumn) {
     switch(_dtp._criterion) {
       case Criterion::GINI:
         return split_gini(dm, featColumn, _dtp._splitStrategy, _dtp._useImpliedZerosInSplitDecision);
       case Criterion::ENTROPY:
 //        return split_entropy(dm, featColumn, _dtp._splitStrategy, _dtp._useImpliedZerosInSplitDecision);
-return std::make_tuple(0,0,0,0);
+return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
     }
   }
 
   // find_split() returns feature ID, split value and monitor showing bit masking -> consider only those set
   //  If stays set on output, split row 'to the right', otherwise it goes to the left
   //  Also return the left and right purities of child nodes
-  std::tuple<featureID, dtype, Monitor, dtype, dtype>
+  std::tuple<featureID, dtype, Monitor, std::tuple<label, dtype>, std::tuple<label, dtype>>
   find_split(const DataMatrix& dm, std::size_t nSplitFeatures, Monitor mask) {
     const std::size_t numFeatures = dm.size2();
     std::size_t featureCount = 0;
     dtype currBest = -1;
     dtype currValue = 0;
-    dtype currLPurity = 0;
-    dtype currRPurity = 0;
+    std::tuple<label, dtype> currLPurity(0,0);
+    std::tuple<label, dtype> currRPurity(0,0);
     featureID currCol = 0;
     std::set<std::size_t> selectedFeats;
     while ( featureCount < nSplitFeatures ) {
@@ -820,7 +878,7 @@ return std::make_tuple(0,0,0,0);
         if ( selectedFeats.insert(col).second && !allZeroes(dm, col, mask) )
           break;
       } // while
-      auto val = evaluate(dm, col); // return split quality, split value, lpurity, rpurity
+      auto val = evaluate(dm, col); // return split quality, split value, ldec/lpurity, rdec/rpurity
       if ( std::get<QS>(val) > currBest ) {
         currBest = std::get<QS>(val);
         currValue = std::get<TH>(val);
@@ -846,7 +904,7 @@ return std::make_tuple(0,0,0,0);
   }
 
   DecisionTreeParameters& _dtp;
-  std::list<Node> _nodes;
+  std::list<Node> _nodes; // root is first element
 };
 
 } // namespace Tree
