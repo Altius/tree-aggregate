@@ -44,8 +44,8 @@ int main(int argc, char** argv) {
 //    const DecisionTreeParameters& dtp = *input._dtp;
 //    build_trees(input._nTrees, dtp, *data.first, *data.second);
 //use multithreading
-//    delete datapair.first;
-//    delete datapair.second;
+    delete datapair.first;
+    delete datapair.second;
     return EXIT_SUCCESS;
   } catch(Help h) {
     std::cout << Usage(argv[0]) << std::endl;

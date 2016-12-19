@@ -9,8 +9,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
-#include <forward_list>
 #include <iostream>
+#include <list>
 #include <queue>
 #include <random>
 #include <set>
@@ -29,6 +29,8 @@
 namespace Tree {
 
 namespace ub = boost::numeric::ublas;
+
+std::string FileFormatVersion = "0.1";
 
 typedef unsigned short featureID;
 typedef featureID label;
@@ -147,7 +149,8 @@ struct DecisionTreeParameters {
   std::ostream&
   operator<<(std::ostream& output, const DecisionTreeParameters& dtp) {
     constexpr char space = ' ';
-    output << "Criterion=" << int(dtp._criterion);
+    output << "FileFormat=" << FileFormatVersion;
+    output << space << "Criterion=" << int(dtp._criterion);
     output << space << "SplitStrategy=" << int(dtp._splitStrategy);
     output << space << "SplitMaxFeat=" << int(dtp._splitMaxSelect);
     output << space << "MaxDepth=" << dtp._maxDepth;
@@ -209,7 +212,9 @@ struct DecisionTreeParameters {
           throw std::domain_error("Programming error: operator>> for DecisionTreeParameters");
         }
       } else {
-        if ( jev[0] == toupper("MaxDepth") )
+        if ( jev[0] == toupper("FileFormat") )
+          FileFormatVersion = jev[1];
+        else if ( jev[0] == toupper("MaxDepth") )
           dtp.set_value(dtp._maxDepth, jev[0], jev[1]);
         else if ( jev[0] == toupper("MaxLeafNodes") )
           dtp.set_value(dtp._maxLeafNodes, jev[0], jev[1]);
@@ -407,11 +412,15 @@ struct DecisionTreeClassifier {
     : _dtp(dtp) {}
 
   std::list<label>
-  classify(const DataMatrix& newData) {
+  classify(const DataMatrixInv& newData) const {
     if ( _nodes.empty() )
       throw std::domain_error("Need to learn a model before applying one!");
-std::list<label> toRtn;
-return toRtn;
+
+    std::list<label> toRtn;
+    std::size_t sz = newData.size1();
+    for ( std::size_t i = 0; i < sz; ++i )
+      toRtn.push_back(classify(row(newData, i)));
+    return toRtn;
   }
 
   label
@@ -419,14 +428,30 @@ return toRtn;
     if ( _nodes.empty() )
       throw std::domain_error("Need to learn a model before you can use one!");
 
-    static constexpr std::size_t FID = 0;
-    static constexpr std::size_t THOLD = 1;
-    for ( const auto& i : _nodes ) {
-      if ( std::get<THOLD>(*std::get<0>(i)) > row[std::get<FID>(*std::get<0>(i))]  ) // go left
-std::cout << "not implemented" << std::endl;
+    static constexpr std::size_t PARENT = 0;
+    static constexpr std::size_t LEFTCHILD = 1;
+    static constexpr std::size_t RIGHTCHILD = 2;
+
+    auto currCore = std::get<PARENT>(_nodes.back());
+    for ( auto iter = _nodes.rbegin(); iter != _nodes.rend(); ) {
+      auto& parent = *iter++;
+
+      if ( std::get<PARENT>(parent) != currCore )
+        continue;
+
+      if ( std::get<THOLD>(*currCore) > row[std::get<FID>(*currCore)]  ) { // look left
+        if ( !std::get<ISLEAF>(*currCore) )
+          currCore = std::get<LEFTCHILD>(parent);
+        else
+          return std::get<DECISION>(*currCore);
+      } else { // look right
+        if ( !std::get<ISLEAF>(*currCore) )
+          currCore = std::get<RIGHTCHILD>(parent);
+        else
+          return std::get<DECISION>(*currCore);
+      }
     } // for
-label huh;
-return huh;
+    throw std::logic_error("Problem with Tree!  See classify()");
   }
 
 private:
@@ -435,10 +460,17 @@ private:
   static constexpr std::size_t LP = 2;
   static constexpr std::size_t RP = 3;
 
-  typedef bool IsLeaf;
+  // Core's elements
+  static constexpr std::size_t FID = 0;
+  static constexpr std::size_t THOLD = 1;
+  static constexpr std::size_t ISLEAF = 2;
+  static constexpr std::size_t DECISION = 3;
+
   typedef featureID FeatureID;
   typedef dtype SplitValue;
-  typedef std::tuple<FeatureID, SplitValue> Core;
+  typedef bool IsLeaf;
+  typedef std::size_t Decision;
+  typedef std::tuple<FeatureID, SplitValue, IsLeaf, Decision> Core;
   typedef Core LeftChild;
   typedef LeftChild RightChild;
   typedef std::tuple<Core*, LeftChild*, RightChild*> Node;
@@ -460,8 +492,10 @@ protected:
     static constexpr std::size_t LPU = 3;
     static constexpr std::size_t RPU = 4;
 // sjn might make better sense to make the 3 monitors pointers everywhere; test performance later
+    const bool noLeaf = false;
+    const std::size_t noDecision = std::numeric_limits<std::size_t>::max();
     auto p = find_split(dm, nSplitFeatures, parentMonitor);
-    Node current(new Core(std::get<FID>(p), std::get<SPV>(p)), nullptr, nullptr); // root
+    Node current(new Core(std::get<FID>(p), std::get<SPV>(p), noLeaf, noDecision), nullptr, nullptr); // root
     decltype(p) q;
 
     // partition parent into left/right
@@ -472,6 +506,7 @@ protected:
     static constexpr std::size_t PARENT_CPTR = 0;
     static constexpr std::size_t LC_CPTR = 1, LC_MON = LC_CPTR;
     static constexpr std::size_t RC_CPTR = 2, RC_MON = RC_CPTR;
+
     std::queue<internal> que;
     que.push(std::make_tuple(std::get<PARENT_CPTR>(current), leftChildMonitor, rightChildMonitor));
 
@@ -480,11 +515,10 @@ protected:
       auto& e = que.front();
       current = Node(std::get<PARENT_CPTR>(e), nullptr, nullptr);
       p = find_split(dm, nSplitFeatures, std::get<LC_MON>(e));
-      std::get<LC_CPTR>(current) = new Core(std::get<FID>(p), std::get<SPV>(p));
+      std::get<LC_CPTR>(current) = new Core(std::get<FID>(p), std::get<SPV>(p), noLeaf, noDecision);
 
       q = find_split(dm, nSplitFeatures, std::get<RC_MON>(e));
-      std::get<RC_CPTR>(current) = new Core(std::get<FID>(q), std::get<SPV>(q));
-      _nodes.push_front(current);
+      std::get<RC_CPTR>(current) = new Core(std::get<FID>(q), std::get<SPV>(q), noLeaf, noDecision);
 
       parentMonitor = std::get<LC_MON>(e);
       rightChildMonitor = std::get<MON>(p);
@@ -496,12 +530,24 @@ protected:
       leftChildMonitor = ~rightChildMonitor & parentMonitor;
       auto nextr = std::make_tuple(std::get<RC_MON>(current), leftChildMonitor, rightChildMonitor);
 
-// sjn shouldn't I use std::get<LPU>(p) here and std::get<RPU>(p) ?
-      que.pop();
+//yeah // sjn shouldn't I use std::get<LPU>(p) here and std::get<RPU>(p) ?
+// this needs fixing
       if ( !done(dm, nextl) )
         que.push(nextl);
+      else {
+        std::get<ISLEAF>(*std::get<PARENT_CPTR>(current)) = true;
+//        std::get<DEC>(*std::get<PARENT_CPTR>(current)) = majority_vote(...);
+      }
+
       if ( !done(dm, nextr) )
         que.push(nextr);
+      else {
+        std::get<ISLEAF>(*std::get<PARENT_CPTR>(current)) = true;
+//        std::get<DEC>(*std::get<PARENT_CPTR>(current)) = majority_vote(...);
+      }
+
+      _nodes.push_front(current);
+      que.pop();
     } // while
   }
 
@@ -547,6 +593,8 @@ public:
       case SplitMaxFeat::LOG2:
         nSplitFeatures = static_cast<std::size_t>(std::round(std::log2(numFeatures)));
         break;
+      default:
+        throw std::domain_error("program error: unknown split type in learn()");
     }
     if ( nSplitFeatures <= 1 )
       throw std::domain_error("Unable to fulfill requested nFeatures to split upon (value <= 1).");
@@ -559,21 +607,69 @@ public:
   friend // read in a model previously created
   std::istream&
   operator>>(std::istream& input, DecisionTreeClassifier& dtc) {
+    input >> dtc._dtp; // header row is for DecisionTreeParamters
+    if (!input)
+      return input;
+
+    DecisionTreeClassifier::FeatureID fid;
+    DecisionTreeClassifier::SplitValue spv;
+    bool ilf;
+    std::size_t decision;
+
+    std::queue<Core*> que;
+    input >> fid;
+    input >> spv;
+    input >> ilf;
+    input >> decision;
+    Core* parent = new Core(fid, spv, ilf, decision);
+    que.push(parent);
+
+    while ( !que.empty() ) {
+      parent = que.front();
+      Core* left = nullptr;
+      Core* right = nullptr;
+      if ( !std::get<DecisionTreeClassifier::ISLEAF>(*parent) ) { // not a leaf
+        input >> fid;
+        input >> spv;
+        input >> ilf;
+        input >> decision;
+        left = new Core(fid, spv, ilf, decision);
+
+        input >> fid;
+        input >> spv;
+        input >> ilf;
+        input >> decision;
+        right = new Core(fid, spv, ilf, decision);
+
+        que.push(left);
+        que.push(right);
+      }
+      dtc._nodes.push_front(Node(parent, left, right));
+      que.pop();
+    } // while
     return input;
   }
 
   friend // write out this model
   std::ostream&
   operator<<(std::ostream& output, const DecisionTreeClassifier& dtc) {
-    
+    constexpr std::size_t PAR = 0;
+
+    constexpr std::size_t FID = 0;
+    constexpr std::size_t SPV = 1;
+    constexpr std::size_t ILF = 2;
+    constexpr std::size_t DEC = 3;
+
+    output << dtc._dtp << std::endl;
+    for ( auto& n : dtc._nodes ) {
+      const Core& parent = *std::get<PAR>(n);
+      output << std::get<FID>(parent) << " " << std::get<SPV>(parent) << " "
+             << std::get<ILF>(parent) << " " << std::get<DEC>(parent) << std::endl;
+    } // for
     return output;
   }
 
 protected:
-  inline
-  bool done() const {
-return false;
-  }
 
   template <typename NonZeroes>
   std::pair<dtype, dtype>
@@ -703,9 +799,9 @@ return std::make_tuple(0,0,0,0);
     }
   }
 
-  // find_split() returns feature ID, split value and monitor showing which 'mask' bits
-  //  go to the right (if set on input, stays set if to the right, unset otherwise)
-  //  finally, it return the left and right purities of child nodes
+  // find_split() returns feature ID, split value and monitor showing bit masking -> consider only those set
+  //  If stays set on output, split row 'to the right', otherwise it goes to the left
+  //  Also return the left and right purities of child nodes
   std::tuple<featureID, dtype, Monitor, dtype, dtype>
   find_split(const DataMatrix& dm, std::size_t nSplitFeatures, Monitor mask) {
     const std::size_t numFeatures = dm.size2();
@@ -750,7 +846,7 @@ return std::make_tuple(0,0,0,0);
   }
 
   DecisionTreeParameters& _dtp;
-  std::forward_list<Node> _nodes;
+  std::list<Node> _nodes;
 };
 
 } // namespace Tree

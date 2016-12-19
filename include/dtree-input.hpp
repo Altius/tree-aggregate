@@ -64,7 +64,7 @@ get_features(const std::string& s, char d1, char d2, std::unordered_map<featureI
     if ( c != zero )
       mp.insert(std::make_pair(b, static_cast<dtype>(c)));
     pos1 = pos2 + 1;
-  } while ( pos2 != std::string::npos ); // while
+  } while ( pos2 != std::string::npos ); // do-while
   if ( 0 == maxFeatureLabel )
     throw std::domain_error("No features found in at least 1 row");
   return maxFeatureLabel;
@@ -101,10 +101,10 @@ read_data(const std::string& source, bool oob, double oobPercent) {
   if ( oob ) {
     oobRows = std::floor(oobPercent * nRows);
     if ( !oobRows )
-      throw std::domain_error("--xval percentage * nRows of input rounds down to 0.  Give a bigger input or increase your --xval percent");
+      throw std::domain_error("--xval percentage * nRows of input rounds down to 0.  Give a bigger input or increase your --xval percentage");
     modRows = std::floor(nRows / oobRows);
     if ( !modRows )
-      throw std::domain_error("something unexpected is wrong.  See 'modRows'");
+      throw std::domain_error("something unexpected is wrong.  See 'read_data()s modRows'");
 
     // have to read through again to derive proper nNonZeroes and nNonZeroesOOB
     infile.close();
