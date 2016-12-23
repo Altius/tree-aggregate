@@ -1,3 +1,28 @@
+/*
+  FILE: dtree-input.hpp
+  AUTHOR: Shane Neph
+  CREATE DATE: Dec.2016
+*/
+
+//
+//    Decision Tree
+//    Copyright (C) 2016-2017 Altius Institute for Biomedical Sciences
+//
+//    This program is free software; you can redistribute it and/or modify
+//    it under the terms of the GNU General Public License as published by
+//    the Free Software Foundation; either version 2 of the License, or
+//    (at your option) any later version.
+//
+//    This program is distributed in the hope that it will be useful,
+//    but WITHOUT ANY WARRANTY; without even the implied warranty of
+//    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//    GNU General Public License for more details.
+//
+//    You should have received a copy of the GNU General Public License along
+//    with this program; if not, write to the Free Software Foundation, Inc.,
+//    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
+
 #ifndef __DECISION_TREE_INPUT__
 #define __DECISION_TREE_INPUT__
 
@@ -10,6 +35,7 @@
 #include <utility>
 
 #include "dtree.hpp"
+#include "utils.hpp"
 
 namespace Tree {
 
@@ -57,7 +83,7 @@ read_data(const std::string& source, bool oob, double oobPercent) {
 
   // kind of crazy, but going to read input twice since I don't want to 'resize'
   //  a DataMatrix each time I add a row.
-  ByLine bl;
+  Utils::ByLine bl;
   std::size_t nRows=0, nCols=0, nNonZeroes = 0, maxFeature = 0;
   std::unordered_map<featureID, dtype> featureList;
   while ( infile >> bl ) {

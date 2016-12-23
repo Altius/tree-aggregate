@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstddef>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -50,6 +51,8 @@
 #include <boost/numeric/ublas/matrix_proxy.hpp>
 #include <boost/numeric/ublas/vector_of_vector.hpp>
 #include <boost/numeric/ublas/vector_proxy.hpp>
+
+#include "utils.hpp"
 
 namespace Tree {
 
@@ -74,32 +77,6 @@ enum struct SplitStrategy { BEST, RANDOM };
 enum struct SplitMaxFeat { INT, FLT, SQRT, LOG2 };
 enum struct ClassWeightType { SAME, BALANCED };
 
-struct ByLine : public std::string {
-  friend std::istream& operator>>(std::istream& is, ByLine& b) {
-    std::getline(is, b);
-    return(is);
-  }
-};
-
-std::vector<std::string>
-split(const std::string& s, const std::string& d) {
-  std::vector<std::string> rtn;
-  std::string::size_type pos1 = 0, pos2 = 0;
-  do {
-    pos2 = s.find(d, pos1);
-    rtn.push_back(s.substr(pos1, pos2-pos1));
-    pos1 = pos2 + 1;
-  } while ( pos2 != std::string::npos ); // while
-  return rtn;
-}
-
-std::string toupper(const std::string& s) {
-  std::string rtn = s;
-  for ( std::size_t i = 0; i < rtn.size(); ++i )
-    rtn[i] = std::toupper(rtn[i]);
-  return rtn;
-}
-
 /* Working under the assumption that decision trees will use the same criteria and such
      through a random forest or through svm feature learning on the decision tree decisions.
      This assumption helps improve memory use.
@@ -114,9 +91,9 @@ struct DecisionTreeParameters {
                          SplitStrategy s = SplitStrategy::BEST,
                          SplitMaxFeat m = SplitMaxFeat::SQRT,
                          SplitType splitValue = SplitType(),
-                         int maxDepth = 0,
-                         int maxLeafNodes = 0,
-                         int minSamplesLeaf = 1,
+                         std::size_t maxDepth = 0,
+                         std::size_t maxLeafNodes = 0,
+                         std::size_t minSamplesLeaf = 1,
                          dtype minPuritySplit = 0.7,
                          bool useImpliedZeroesInSplitDecision = true,
                          ClassWeightType cw = ClassWeightType::SAME,
@@ -132,7 +109,7 @@ struct DecisionTreeParameters {
                     _useImpliedZerosInSplitDecision(useImpliedZeroesInSplitDecision),
                     _classWeightType(cw),
                     _seed(randomState),
-                    _splitMaxFeatures(-1),
+//                    _splitMaxFeatures(-1),
                     _selectSplitNumeric(splitValue),
                     _unif(0,1)
     {
@@ -159,18 +136,18 @@ struct DecisionTreeParameters {
       if ( _minPuritySplit <= 0.5 )
         throw std::domain_error("minimum purity setting must be > 0.5");
 
-      _enums[toupper("Criterion")] = static_cast<int>(_criterion);
-      _enums[toupper("SplitStrategy")] = static_cast<int>(_splitStrategy);
-      _enums[toupper("SplitMaxFeatures")] = static_cast<int>(_splitMaxSelect);
-      _enums[toupper("ClassWeightType")] = static_cast<int>(_classWeightType);
+      _enums[Utils::uppercase("Criterion")] = static_cast<int>(_criterion);
+      _enums[Utils::uppercase("SplitStrategy")] = static_cast<int>(_splitStrategy);
+      _enums[Utils::uppercase("SplitMaxFeatures")] = static_cast<int>(_splitMaxSelect);
+      _enums[Utils::uppercase("ClassWeightType")] = static_cast<int>(_classWeightType);
 
-      _argmap[toupper("MaxDepth")] = Nums::PLUSINT; // zero means unused; grow full
-      _argmap[toupper("MaxLeafNodes")] = Nums::PLUSINT; // zero means unused
-      _argmap[toupper("MinLeafSamples")] = Nums::PLUSREAL; // when set, split until Node has this number or fewer; FLT means % of #rows
-      _argmap[toupper("MinPuritySplit")] = Nums::PLUSREAL_NOZERO; // split if purity less than this
-      _argmap[toupper("UseZeroesInSplit")] = Nums::BOOL; // use missing data == zero ?
-      _argmap[toupper("Seed")] = Nums::PLUSINT; // zero means use random seed
-      _argmap[toupper("SelectSplitNumeric")] = Nums::PLUSREAL; // if SplitMaxFeatures=INT||FLT, this is the value
+      _argmap[Utils::uppercase("MaxDepth")] = Utils::Nums::PLUSINT; // zero means unused; grow full
+      _argmap[Utils::uppercase("MaxLeafNodes")] = Utils::Nums::PLUSINT; // zero means unused
+      _argmap[Utils::uppercase("MinLeafSamples")] = Utils::Nums::PLUSREAL; // when set, split until Node has this number or fewer; FLT means % of #rows
+      _argmap[Utils::uppercase("MinPuritySplit")] = Utils::Nums::PLUSREAL_NOZERO; // split if purity less than this
+      _argmap[Utils::uppercase("UseZeroesInSplit")] = Utils::Nums::BOOL; // use missing data == zero ?
+      _argmap[Utils::uppercase("Seed")] = Utils::Nums::PLUSINT; // zero means use random seed
+      _argmap[Utils::uppercase("SelectSplitNumeric")] = Utils::Nums::PLUSREAL; // if SplitMaxFeatures=INT||FLT, this is the value
     }
 
   friend
@@ -188,7 +165,6 @@ struct DecisionTreeParameters {
     output << space << "UseZeroesInSplit=" << dtp._useImpliedZerosInSplitDecision;
     output << space << "ClassWeighting=" << int(dtp._classWeightType);
     output << space << "Seed=" << dtp._seed;
-    output << space << "SplitMaxFeatures=" << int(dtp._splitMaxFeatures);
     output << space << "SelectSplitNumeric=" << dtp._selectSplitNumeric;
     output << std::endl;
     return output;
@@ -198,27 +174,28 @@ struct DecisionTreeParameters {
   std::istream&
   operator>>(std::istream& is, DecisionTreeParameters& dtp) {
     const std::string space(" ");
-    Tree::ByLine bl;
+    using Utils::uppercase;
+    Utils::ByLine bl;
     is >> bl;
-    auto vec = split(toupper(bl), space);
+    auto vec = Utils::split(Utils::uppercase(bl), space);
     for ( auto& v : vec ) {
-      auto jev = split(v, "=");
+      auto jev = Utils::split(v, "=");
       if ( dtp._enums.find(jev[0]) != dtp._enums.end() ) {
-        if ( jev[0] == toupper("Criterion") ) {
+        if ( jev[0] == Utils::uppercase("Criterion") ) {
           if ( jev[1] == "GINI" )
             dtp._criterion = Criterion::GINI;
           else if ( jev[1] == "ENTROPY" )
             dtp._criterion = Criterion::ENTROPY;
           else
             throw std::domain_error("Bad Criterion name: " + jev[1]);
-        } else if ( jev[0] == toupper("SplitStrategy") ) {
+        } else if ( jev[0] == Utils::uppercase("SplitStrategy") ) {
           if ( jev[1] == "BEST" )
             dtp._splitStrategy = SplitStrategy::BEST;
           else if ( jev[1] == "RANDOM" )
             dtp._splitStrategy = SplitStrategy::RANDOM;
           else
             throw std::domain_error("Bad SplitStrategy name: " + jev[1]);
-        } else if ( jev[0] == toupper("SPLITMAXFEAT") ) {
+        } else if ( jev[0] == Utils::uppercase("SPLITMAXFEAT") ) {
           if ( jev[1] == "INT" )
             dtp._splitMaxSelect = SplitMaxFeat::INT;
           else if ( jev[1] == "FLT" )
@@ -229,7 +206,7 @@ struct DecisionTreeParameters {
             dtp._splitMaxSelect = SplitMaxFeat::LOG2;
           else
             throw std::domain_error("Bad SplitMaxFeat name: " + jev[1]);
-        } else if ( jev[0] == toupper("ClassWeightType") ) {
+        } else if ( jev[0] == Utils::uppercase("ClassWeightType") ) {
           if ( jev[1] == "SAME" )
             dtp._classWeightType = ClassWeightType::SAME;
           else if ( jev[1] == "BALANCED" )
@@ -240,33 +217,31 @@ struct DecisionTreeParameters {
           throw std::domain_error("Programming error: operator>> for DecisionTreeParameters");
         }
       } else {
-        if ( jev[0] == toupper("FileFormat") )
+        if ( jev[0] == Utils::uppercase("FileFormat") )
           FileFormatVersion = jev[1];
-        else if ( jev[0] == toupper("MaxDepth") )
+        else if ( jev[0] == Utils::uppercase("MaxDepth") )
           dtp.set_value(dtp._maxDepth, jev[0], jev[1]);
-        else if ( jev[0] == toupper("MaxLeafNodes") )
+        else if ( jev[0] == Utils::uppercase("MaxLeafNodes") )
           dtp.set_value(dtp._maxLeafNodes, jev[0], jev[1]);
-        else if ( jev[0] == toupper("MinLeafSamples") )
+        else if ( jev[0] == Utils::uppercase("MinLeafSamples") )
           dtp.set_value(dtp._minLeafSamples, jev[0], jev[1]);
-        else if ( jev[0] == toupper("MinPuritySplit") )
+        else if ( jev[0] == Utils::uppercase("MinPuritySplit") )
           dtp.set_value(dtp._minPuritySplit, jev[0], jev[1]);
-        else if ( jev[0] == toupper("UseZeroesInSplit") )
+        else if ( jev[0] == Utils::uppercase("UseZeroesInSplit") )
           dtp.set_value(dtp._useImpliedZerosInSplitDecision, jev[0], jev[1]);
-        else if ( jev[0] == toupper("Seed") )
+        else if ( jev[0] == Utils::uppercase("Seed") )
           dtp.set_value(dtp._seed, jev[0], jev[1]);
-        else if ( jev[0] == toupper("SplitMaxFeatures") )
-          dtp.set_value(dtp._splitMaxFeatures, jev[0], jev[1]);
-        else if ( jev[0] == toupper("SelectSplitNumeric") )
+        else if ( jev[0] == Utils::uppercase("SelectSplitNumeric") )
           dtp.set_value(dtp._selectSplitNumeric, jev[0], jev[1]);
         else
           throw std::domain_error("model error: operator>> for DecisionTreeParameters");
       }
     } // for
 
-    dtp._enums[toupper("Criterion")] = dtp.get_enum(dtp._criterion);
-    dtp._enums[toupper("SplitStrategy")] = dtp.get_enum(dtp._splitStrategy);
-    dtp._enums[toupper("SplitMaxFeat")] = dtp.get_enum(dtp._splitMaxSelect);
-    dtp._enums[toupper("ClassWeightType")] = dtp.get_enum(dtp._classWeightType);
+    dtp._enums[Utils::uppercase("Criterion")] = dtp.get_enum(dtp._criterion);
+    dtp._enums[Utils::uppercase("SplitStrategy")] = dtp.get_enum(dtp._splitStrategy);
+    dtp._enums[Utils::uppercase("SplitMaxFeat")] = dtp.get_enum(dtp._splitMaxSelect);
+    dtp._enums[Utils::uppercase("ClassWeightType")] = dtp.get_enum(dtp._classWeightType);
 
     dtp.do_seed();
 
@@ -274,6 +249,15 @@ struct DecisionTreeParameters {
   }
 
 private:
+  template <typename T>
+  T
+  check_value(const std::string& s, const std::string& v) {
+    auto f = _argmap.find(Utils::uppercase(s));
+    if ( f == _argmap.end() )
+      throw std::domain_error("Unknown Option: " + s);
+    return Utils::convert<T>(s, f->second);
+  }
+
   void do_seed() {
     std::seed_seq ss{uint32_t(_seed & 0xffffffff), uint32_t(_seed>>32)};
     _rng.seed(ss);
@@ -285,95 +269,6 @@ private:
   template <typename T>
   void set_value(T& t, const std::string& s, const std::string& v) { t = check_value<T>(s,v); }
 
-  enum struct Nums { BIGINT, PLUSBIGINT, PLUSBIGINT_NOZERO, INT, PLUSINT, PLUSINT_NOZERO, REAL, PLUSREAL, PLUSREAL_NOZERO, BOOL };
-
-  /* basic stuff only:
-      doesn't support scientific notation
-      doesn't allow '+' out in front
-      certainly others
-' */
-  template <typename T>
-  T
-  check_value(const std::string& s, const std::string& v) {
-    static const std::string PlusInts = "0123456789";
-    static const std::string Ints = "-" + PlusInts;
-    static const std::string PlusReals = "." + PlusInts;
-    static const std::string Reals = "." + Ints;
-    static const std::string Bools = "01";
-    auto f = _argmap.find(toupper(s));
-    if ( f == _argmap.end() )
-      throw std::domain_error("Unknown Option: " + s);
-
-    switch (f->second) {
-      case Nums::BIGINT:
-        if ( v.find_first_not_of(Ints) != std::string::npos )
-          throw std::domain_error("Unknown <long> numeric: " + v);
-        else if ( v.find("-") != std::string::npos && v.find("-") != 0 )
-          throw std::domain_error("Bad signed long integer: " + v);
-        return static_cast<T>(std::atol(v.c_str()));
-      case Nums::PLUSBIGINT:
-        if ( v.find_first_not_of(Ints) != std::string::npos )
-          throw std::domain_error("Unknown <long> numeric: " + v);
-        else if ( v.find("-") != std::string::npos && v.find("-") != 0 )
-          throw std::domain_error("Bad signed long integer: " + v);
-        else if ( std::atof(v.c_str()) == .0 )
-          throw std::domain_error("Bad big <+int> gt 0: " + v);
-        return static_cast<T>(std::strtoul(v.c_str(), NULL, 10));
-      case Nums::PLUSBIGINT_NOZERO:
-        if ( v.find_first_not_of(Ints) != std::string::npos )
-          throw std::domain_error("Unknown <long> numeric: " + v);
-        else if ( v.find("-") != std::string::npos && v.find("-") != 0 )
-          throw std::domain_error("Bad signed long integer: " + v);
-        return static_cast<T>(std::strtoul(v.c_str(), NULL, 10));
-      case Nums::INT:
-        if ( v.find_first_not_of(Ints) != std::string::npos )
-          throw std::domain_error("Unknown <int> numeric: " + v);
-        else if ( v.find("-") != std::string::npos && v.find("-") != 0 )
-          throw std::domain_error("Bad signed integer: " + v);
-        return static_cast<T>(std::atoi(v.c_str()));
-      case Nums::PLUSINT:
-        if ( v.find_first_not_of(PlusInts) != std::string::npos )
-          throw std::domain_error("Unknown <+int> numeric: " + v);
-        return static_cast<T>(std::atoi(v.c_str()));
-      case Nums::PLUSINT_NOZERO:
-        if ( v.find_first_not_of(PlusInts) != std::string::npos )
-          throw std::domain_error("Unknown <+int> numeric: " + v);
-        else if ( std::atof(v.c_str()) == .0 )
-          throw std::domain_error("Bad <+int> gt 0: " + v);
-        return static_cast<T>(std::atoi(v.c_str()));
-      case Nums::REAL:
-        if ( v.find_first_not_of(Reals) != std::string::npos )
-          throw std::domain_error("Unknown <floating> numeric: " + v);
-        else if ( v.find("-") != std::string::npos && v.find("-") != 0 )
-          throw std::domain_error("Bad signed floating: " + v);
-        else if ( std::count(v.begin(), v.end(), '.') > 1 )
-          throw std::domain_error("Bad decimal: " + v);
-        return static_cast<T>(std::atof(v.c_str()));
-      case Nums::PLUSREAL:
-        if ( v.find_first_not_of(PlusReals) != std::string::npos )
-          throw std::domain_error("Unknown <floating> numeric: " + v);
-        else if ( std::count(v.begin(), v.end(), '.') > 1 )
-          throw std::domain_error("Bad decimal: " + v);
-        return static_cast<T>(std::atof(v.c_str()));
-      case Nums::PLUSREAL_NOZERO:
-        if ( v.find_first_not_of(PlusReals) != std::string::npos )
-          throw std::domain_error("Unknown <+floating> numeric: " + v);
-        else if ( (T)0 == std::atof(v.c_str()) ) // set to 0 by atof if a bad numeric string
-          throw std::domain_error("Bad <+floating> gt 0: " + v);
-        else if ( std::count(v.begin(), v.end(), '.') > 1 )
-          throw std::domain_error("Bad decimal: " + v);
-        else if ( std::atof(v.c_str()) == .0 )
-          throw std::domain_error("Bad <+int> gt 0: " + v);
-        return static_cast<T>(std::atof(v.c_str()));
-      case Nums::BOOL:
-        if ( v.find_first_not_of(Bools) != std::string::npos )
-          throw std::domain_error("Unknown <bool> numeric: " + v);
-        return static_cast<T>(v[0] == '1');
-      default:
-        throw std::domain_error("program error: unknown numeric in dtp::set_value()");
-    }
-  }
-
 private:
   friend struct DecisionTreeClassifier;
 
@@ -381,24 +276,24 @@ private:
   Criterion _criterion;
   SplitStrategy _splitStrategy;
   SplitMaxFeat _splitMaxSelect; // if INT, then _selectSplitNumeric > 0.  if FLT, then 0 < _selectSplitNumeric <= 1
-  int _maxDepth; // 0 means expand until all leaves meet purity criterion or until all nodes contain less than _minLeafSamples
-  int _maxLeafNodes; // 0, then unlimited leaf nodes, else grow a tree until you reach _maxLeafNodes using bfs
-  int _minLeafSamples; // 0, then not a stopping condition, else done splitting if drops to this level
+  std::size_t _maxDepth; // 0 means expand until all leaves meet purity criterion or until all nodes contain less than _minLeafSamples
+  std::size_t _maxLeafNodes; // 0, then unlimited leaf nodes, else grow a tree until you reach _maxLeafNodes using bfs
+  std::size_t _minLeafSamples; // 0, then not a stopping condition, else done splitting if #samples in leaf drops to this level
   dtype _minPuritySplit; // A node will split if its purity is less than the threshold, otherwise it is a leaf
   bool _useImpliedZerosInSplitDecision;
   ClassWeightType _classWeightType;
   long int _seed;
 
+  // set after or while data are read
+//  dtype _splitMaxFeatures;
+  dtype _selectSplitNumeric; // if _splitMaxSelect is INT,FLT then this is the value of the INT or FLT
+
   std::uniform_real_distribution<double> _unif;
   std::mt19937_64 _rng;
 
-  // set after or while data are read
-  dtype _splitMaxFeatures;
-  dtype _selectSplitNumeric; // if _splitMaxSelect is INT,FLT then this is the value of the INT or FLT
-
   // not user-settable
   std::unordered_map<std::string, int> _enums; // support operator>>
-  std::unordered_map<std::string, Nums> _argmap; // support operator>>
+  std::unordered_map<std::string, Utils::Nums> _argmap; // support operator>>
 };
 
 template <typename SparseMatrix>
@@ -541,19 +436,21 @@ protected:
     Monitor rightChildMonitor = std::get<MON>(p);
     Monitor leftChildMonitor = ~rightChildMonitor & parentMonitor;
 
-    typedef std::tuple<Core*, Monitor, Monitor> internal;
+    typedef std::tuple<Core*, Monitor, Monitor, std::size_t> internal;
     static constexpr std::size_t PARENT_CPTR = 0;
     static constexpr std::size_t LC_CPTR = 1, LC_MON = LC_CPTR;
     static constexpr std::size_t RC_CPTR = 2, RC_MON = RC_CPTR;
+    static constexpr std::size_t LEVEL = 3;
 
     std::queue<internal> que;
-    que.push(std::make_tuple(std::get<PARENT_CPTR>(current), leftChildMonitor, rightChildMonitor));
+    que.push(std::make_tuple(std::get<PARENT_CPTR>(current), leftChildMonitor, rightChildMonitor, 0));
 
     // breadth first traversal
-    std::size_t level = 0, nleaves = 0;
+    std::size_t nleaves = 0;
     while ( !que.empty() ) {
       auto& e = que.front();
-      ++level;
+      const std::size_t level = std::get<LEVEL>(e);
+
       current = Node(std::get<PARENT_CPTR>(e), nullptr, nullptr);
       p = find_split(dm, nSplitFeatures, std::get<LC_MON>(e));
       std::get<LC_CPTR>(current) = new Core(std::get<FID>(p), std::get<SPV>(p), noLeaf, noDecision);
@@ -564,12 +461,12 @@ protected:
       parentMonitor = std::get<LC_MON>(e);
       rightChildMonitor = std::get<MON>(p);
       leftChildMonitor = ~rightChildMonitor & parentMonitor;
-      auto nextl = std::make_tuple(std::get<LC_CPTR>(current), leftChildMonitor, rightChildMonitor);
+      auto nextl = std::make_tuple(std::get<LC_CPTR>(current), leftChildMonitor, rightChildMonitor, level+1);
 
       parentMonitor = std::get<RC_MON>(e);
       rightChildMonitor = std::get<MON>(q);
       leftChildMonitor = ~rightChildMonitor & parentMonitor;
-      auto nextr = std::make_tuple(std::get<RC_CPTR>(current), leftChildMonitor, rightChildMonitor);
+      auto nextr = std::make_tuple(std::get<RC_CPTR>(current), leftChildMonitor, rightChildMonitor, level+1);
 
       if ( !done(std::get<PUR>(std::get<LPU>(p)), level, nleaves) )
         que.push(nextl);
@@ -594,7 +491,7 @@ protected:
 
   // may add in _minLeafSamples eventually
   inline bool
-  done(dtype currPurity, std::size_t level, int maxLeaves) {
+  done(dtype currPurity, std::size_t level, std::size_t maxLeaves) {
     return (currPurity >= _dtp._minPuritySplit) ||
            (_dtp._maxDepth && level > _dtp._maxDepth)   ||
            (_dtp._maxLeafNodes && maxLeaves > _dtp._maxLeafNodes);

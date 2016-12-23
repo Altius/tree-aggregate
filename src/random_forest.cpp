@@ -1,15 +1,42 @@
+/*
+  FILE: random_forest.cpp
+  AUTHOR: Shane Neph
+  CREATE DATE: Dec.2016
+*/
+
+//
+//    Random Forest
+//    Copyright (C) 2016-2017 Altius Institute for Biomedical Sciences
+//
+//    This program is free software; you can redistribute it and/or modify
+//    it under the terms of the GNU General Public License as published by
+//    the Free Software Foundation; either version 2 of the License, or
+//    (at your option) any later version.
+//
+//    This program is distributed in the hope that it will be useful,
+//    but WITHOUT ANY WARRANTY; without even the implied warranty of
+//    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//    GNU General Public License for more details.
+//
+//    You should have received a copy of the GNU General Public License along
+//    with this program; if not, write to the Free Software Foundation, Inc.,
+//    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+//
+
 #include <cstdlib>
 #include <ctime>
+#include <exception>
 #include <fstream>
 #include <iostream>
 #include <list>
-#include <unordered_map>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "../include/dtree.hpp"
 #include "../include/dtree-input.hpp"
+#include "../include/utils.hpp"
 
 using namespace Tree;
 
@@ -84,8 +111,6 @@ int main(int argc, char** argv) {
   return EXIT_FAILURE;
 }
 
-
-
 Input::Input(int argc, char** argv) : _mode(LEARN),
                                       _saveModels(false),
                                       _oobTests(false),
@@ -126,9 +151,9 @@ Input::Input(int argc, char** argv) : _mode(LEARN),
   bool nonopt = false;
   int numnonopt = 0;
   for ( int i = 2; i < argc; ++i ) {
-    auto narg = split(argv[i], "="); // from dtree.hpp
-    if ( narg.size() != 2 ) {
-      if ( narg.size() != 1 )
+    auto next = Utils::split(argv[i], "="); // function from dtree.hpp
+    if ( next.size() != 2 ) {
+      if ( next.size() != 1 )
         throw std::domain_error("Bad argument: " + std::string(argv[i]));
       nonopt = true;
       ++numnonopt;
@@ -140,54 +165,53 @@ Input::Input(int argc, char** argv) : _mode(LEARN),
           throw std::domain_error("Too many non-option args");
       }
     } else {
-      if ( nonopt )
-        throw std::domain_error("option given after non-option " + narg[0]);
+      if ( nonopt ) // options should come before required file inputs
+        throw std::domain_error("option " + next[0] + " given after a non-option.");
 
-      if ( narg[0] == "--njobs" )
-        _nJobs = convert<decltype(_nJobs)>(next[1], plusint);
+      if ( next[0] == "--njobs" )
+        _nJobs = Utils::convert<decltype(_nJobs)>(next[1], Utils::Nums::PLUSINT);
       else { // specific to _mode == LEARN
         if ( _mode != LEARN )
-          throw std::domain-error(narg[0] + " does not make sense when not in learn-model mode");
+          throw std::domain_error(next[0] + " does not make sense when not in learn-model mode");
 
-        if ( narg[0] == "--xval" ) {
+        if ( next[0] == "--xval" ) {
           _oobTests = true;
-          _oobPercent = convert<decltype(_oobPercent)>(next[1], plusreal);
+          _oobPercent = Utils::convert<decltype(_oobPercent)>(next[1], Utils::Nums::PLUSREAL);
           if ( _oobPercent < 0.01 || _oobPercent > 0.49 )
             throw std::domain_error("--xval should have a value b/n 0.01 and 0.49");
         }
-        else if ( narg[0] == "--seed" ) {
-          seed = convert<decltype(seed)>(next[1], bigplusinteger);
-          throw std::domain-error("--seed does not make sense when not in learn-model mode");
+        else if ( next[0] == "--seed" ) {
+          seed = Utils::convert<decltype(seed)>(next[1], Utils::Nums::PLUSBIGINT);
+          throw std::domain_error("--seed does not make sense when not in learn-model mode");
         }
-        else if ( narg[0] == "--nsplit-features" ) {
+        else if ( next[0] == "--nsplit-features" ) {
           if ( _mode != LEARN )
-            throw std::domain-error("--nsplit-features does not make sense when not in learn-model mode");
+            throw std::domain_error("--nsplit-features does not make sense when not in learn-model mode");
   
-          if ( toupper(narg[1]) == "SQRT" )
+          if ( Utils::uppercase(next[1]) == "SQRT" )
             splitMaxFeat = SplitMaxFeat::SQRT;
-          else if ( toupper(narg[1]) == "LOG2" )
+          else if ( Utils::uppercase(next[1]) == "LOG2" )
             splitMaxFeat = SplitMaxFeat::LOG2;
           else { // INT or FLT
             try {
-              int dummy = convert<int>(next[1], plusint);
+              int dummy = Utils::convert<int>(next[1], Utils::Nums::PLUSINT_NOZERO);
               splitVal = dummy;
             } catch(std::domain_error de) {
-              double dummy = convert<double>(next[1], plusreal);
+              double dummy = Utils::convert<double>(next[1], Utils::Nums::PLUSREAL);
               if ( dummy < 0.01 || dummy > 1 )
-                throw std::domain_error("require " + narg[0] + " value: 0.01 <= value <= 1");
+                throw std::domain_error("require " + next[0] + " value: 0.01 <= value <= 1");
               splitVal = dummy;
             }
           }
-          else
-            throw std::domain_error("problem with --nsplit-features=" + narg[1] + ". See --help");
         }
         else
-          throw std::domain_error("unknown option: " + narg[0]);
+          throw std::domain_error("unknown option: " + next[0]);
       }
     }
   } // for
 
-  _dtp = new DecisionTreeParameters(criterion, strategy, splitMaxFeat, splitVal,
+  _dtp = new DecisionTreeParameters(
+                                    criterion, strategy, splitMaxFeat, splitVal,
                                     mxDepth, mxLeaves, minLeafSamples, minPurity,
                                     useZeroes, classWeight, seed
                                    );
