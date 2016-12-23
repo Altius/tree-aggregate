@@ -1,6 +1,6 @@
 CC	= g++
 FLAGS	= -static -ansi -Wall -std=c++11 -pedantic -O3 -s
-DFLAGS	= -static -ansi -Wall -std=c++11 -pedantic -O0 -g -s
+DFLAGS	= -static -ansi -Wall -std=c++11 -pedantic -O0 -g
 SRCDIR	= src
 BIN	= bin
 
@@ -16,7 +16,7 @@ prog:
 
 debug:
 	mkdir -p $(BIN)
-	$(CC) -o $(BIN)/debug.rf $(FLAGS) $(SRCDIR)/$(SOURCE1)
+	$(CC) -o $(BIN)/debug.rf $(DFLAGS) $(SRCDIR)/$(SOURCE1)
 
 clean:
 	rm -rf $(BIN)/rf

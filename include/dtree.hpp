@@ -109,7 +109,6 @@ struct DecisionTreeParameters {
                     _useImpliedZerosInSplitDecision(useImpliedZeroesInSplitDecision),
                     _classWeightType(cw),
                     _seed(randomState),
-//                    _splitMaxFeatures(-1),
                     _selectSplitNumeric(splitValue),
                     _unif(0,1)
     {
@@ -285,7 +284,6 @@ private:
   long int _seed;
 
   // set after or while data are read
-//  dtype _splitMaxFeatures;
   dtype _selectSplitNumeric; // if _splitMaxSelect is INT,FLT then this is the value of the INT or FLT
 
   std::uniform_real_distribution<double> _unif;
@@ -654,7 +652,7 @@ protected:
     dtype sum_left = 0, sum_right = 0;
     for ( std::size_t cls = 0; cls < left.size(); ++cls ) {
       class_total = left[cls] + right[cls];
-      if ( 0 == class_total ) // sjn : is this possible?
+      if ( 0 == class_total )
         continue;
       prop_left = left[cls]/class_total;
       prop_right = right[cls]/class_total;
@@ -692,14 +690,14 @@ protected:
         auto nr = nl; //  how many instances of each class in right branch
         if ( includeZeroes ) {
           for ( std::size_t i = 0; i < values.size(); ++i ) {
-            if ( u > std::get<TH>(rtn) )
+            if ( values[i] > u )
               nr[labels(i)]++;
             else
               nl[labels(i)]++;
           } // for
         } else { // only look at labels of rows with nonZero values for this featColumn
           for ( auto viter = values.begin(); viter != values.end(); ++viter ) { // these are const_iterators due to values
-            if ( *viter > std::get<TH>(rtn) )
+            if ( *viter > u )
               nr[labels(viter.index())]++;
             else
               nl[labels(viter.index())]++;
@@ -711,6 +709,9 @@ protected:
           std::get<TH>(rtn) = u;
           std::get<LP>(rtn) = purity(nl);
           std::get<RP>(rtn) = purity(nr);
+          best_score = gval;
+          if ( best_score == 0 )
+            break;
         }
       } // for
     } else if ( s == SplitStrategy::RANDOM ) {
@@ -749,9 +750,10 @@ protected:
       case Criterion::GINI:
         return split_gini(dm, featColumn, _dtp._splitStrategy, _dtp._useImpliedZerosInSplitDecision);
       case Criterion::ENTROPY:
+break;
 //        return split_entropy(dm, featColumn, _dtp._splitStrategy, _dtp._useImpliedZerosInSplitDecision);
-return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
     }
+return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
   }
 
   // find_split() returns feature ID, split value and monitor showing bit masking -> consider only those set
@@ -759,7 +761,7 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
   //  Also return the left and right purities of child nodes
   std::tuple<featureID, dtype, Monitor, std::tuple<label, dtype>, std::tuple<label, dtype>>
   find_split(const DataMatrix& dm, std::size_t nSplitFeatures, Monitor mask) {
-    const std::size_t numFeatures = dm.size2();
+    const std::size_t numFeatures = dm.size2() - 1; // includes label column
     std::size_t featureCount = 0;
     dtype currBest = -1;
     dtype currValue = 0;
@@ -772,8 +774,20 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
       while (true) {
 // sjn: could loop forever on edge cases - fix this
         col = static_cast<featureID>(std::round(_dtp._unif(_dtp._rng) * numFeatures));
-        if ( selectedFeats.insert(col).second && !allZeroes(dm, col, mask) )
-          break;
+//        if ( col > 0 && selectedFeats.insert(col).second && !allZeroes(dm, col, mask) )
+//          break;
+std::cout << col;
+auto foo = selectedFeats.insert(col).second;
+std::cout << " " << foo;
+std::cout << " " << !allZeroes(dm, col, mask);
+std::cout << " " << mask;
+auto& foo2 = column(dm, col);
+std::cout << " ";
+std::copy(foo2.begin(), foo2.end(), std::ostream_iterator<dtype>(std::cout, " "));
+//std::cout << " " << column(dm, col);
+std::cout << std::endl;
+if ( col > 0 && foo && !allZeroes(dm, col, mask) )
+break;
       } // while
       auto val = evaluate(dm, col); // return split quality, split value, ldec/lpurity, rdec/rpurity
       if ( std::get<QS>(val) > currBest ) {
@@ -782,6 +796,8 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
         currLPurity = std::get<LP>(val);
         currRPurity = std::get<RP>(val);
         currCol = col;
+        if ( currBest == 1 )
+          break;
       }
       ++featureCount;
     } // while
@@ -793,7 +809,7 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
     const auto& vals = column(dm, currCol);
     const dtype threshold = currValue;
     while ( beg != mask.npos ) {
-      if ( threshold > vals[beg] ) // goes to left child (could be implicit zero)
+      if ( threshold >= vals[beg] ) // goes to left child (could be implicit zero)
         mask[beg] = false;
       beg = mask.find_next(beg);
     } // while

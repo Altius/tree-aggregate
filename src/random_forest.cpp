@@ -55,7 +55,7 @@ struct Version {};
 struct Input {
   Input(int argc, char** argv);
 
-  enum Mode { LEARN, PREDICT };
+  enum class Mode { LEARN, PREDICT };
 
   Mode _mode;
   bool _saveModels;
@@ -63,6 +63,7 @@ struct Input {
   double _oobPercent;
   std::size_t _nJobs;
   std::size_t _nTrees;
+  std::string _modelFile;
   std::string _dataSource;
   DecisionTreeParameters* _dtp;
 
@@ -70,29 +71,55 @@ struct Input {
 };
 
 struct RandomForest {
-  DataMatrix& _dm;
-  DataMatrixInv& _oobs;
-  std::list<DecisionTreeClassifier> _forest;
+  RandomForest(const DataMatrix& dm, const DataMatrixInv& oobs) : _dm(dm), _oobs(oobs) {}
+
+  const DataMatrix& _dm;
+  const DataMatrixInv& _oobs;
+  std::list<DecisionTreeClassifier*> _forest;
 };
 
 double GetVariableImportance(const RandomForest& rf) {
 return 0;
 }
 
+void
+build_trees(std::size_t nTrees, DecisionTreeParameters& dtp, const DataMatrix& train, std::list<DecisionTreeClassifier*>& trees) {
+  for ( std::size_t idx = 0; idx < nTrees; ++idx ) {
+    auto nextTree = new DecisionTreeClassifier(dtp);
+// sjn use multithreading here when building trees
+// need to separate uniform prng from dtp, make dtp const above and in DTC class, and in main()
+// each thread receives its own prng with some unique offset from the given _seed
+    nextTree->learn(train);
+    trees.push_back(nextTree);
+  } // for
+}
+
 
 int main(int argc, char** argv) {
   try {
     Input input(argc, argv);
-    auto datapair = read_data(input._dataSource, input._oobTests, input._oobPercent); // _dataSource includes labels
-//std::cout << *datapair.first << std::endl;
+// sjn probably need to make a _unif and _rng per thread (adding one to the core seed value) and pull it out of dtp so that it can be const
+    auto datapair = read_data(input._dataSource, input._oobTests, input._oobPercent);
 
-    const DecisionTreeParameters& dtp = *input._dtp;
-//    build_trees(input._nTrees, dtp, *datapair.first, *datapair.second);
-//use multithreading
+    DecisionTreeParameters& dtp = *input._dtp;
+    std::list<DecisionTreeClassifier*> dtcs;
+    if ( input._mode == Input::Mode::LEARN ) {
+      build_trees(input._nTrees, dtp, *datapair.first, dtcs);
+//      if ( datapair.second ) // x-validation
+//        auto stats = xval_estimates(dtcs, *datapair.second);
+//      if ( input._saveModels )
+//        save_models(dtcs, input._modelFile, input); // need to save input data as first line
+    } else { // classify new features
+//      read_models(input._modelFile, dtcs);
+//      classifications(classify(*datapair.first, dtcs);
+    }
+
     if ( datapair.first )
       delete datapair.first;
     if ( datapair.second )
       delete datapair.second;
+    for ( auto ntree : dtcs )
+      delete ntree;
     return EXIT_SUCCESS;
   } catch(Help h) {
     std::cout << Usage(argv[0]) << std::endl;
@@ -111,16 +138,13 @@ int main(int argc, char** argv) {
   return EXIT_FAILURE;
 }
 
-Input::Input(int argc, char** argv) : _mode(LEARN),
+Input::Input(int argc, char** argv) : _mode(Mode::LEARN),
                                       _saveModels(false),
                                       _oobTests(false),
                                       _oobPercent(0),
                                       _nJobs(1),
                                       _nTrees(0),
                                       _dtp(nullptr) {
-  if ( argc < 3 )
-    throw std::domain_error("Wrong # args");
-
   for ( int i = 1; i < argc; ++i ) {
     if ( argv[i] == std::string("--help") )
       throw(Help());
@@ -128,11 +152,14 @@ Input::Input(int argc, char** argv) : _mode(LEARN),
       throw(Version());
   } // for
 
+  if ( argc < 3 )
+    throw std::domain_error("Wrong # args");
+
   std::string nxt = argv[1];
   if ( nxt == "predict" )
-    _mode = PREDICT;
+    _mode = Mode::PREDICT;
   else if ( nxt == "learn" )
-    _mode = LEARN;
+    _mode = Mode::LEARN;
   else
     throw std::domain_error("unknown mode: " + nxt);
 
@@ -157,12 +184,20 @@ Input::Input(int argc, char** argv) : _mode(LEARN),
         throw std::domain_error("Bad argument: " + std::string(argv[i]));
       nonopt = true;
       ++numnonopt;
-      if ( _mode == LEARN ) {
+      if ( _mode == Mode::LEARN ) {
         if ( numnonopt > 2 )
           throw std::domain_error("Too many non-option args");
-      } else { // _mode == PREDICT
-        if ( numnonopt > 1 )
+        else if ( numnonopt == 1 )
+          _nTrees = Utils::convert<decltype(_nTrees)>(next[0], Utils::Nums::PLUSINT_NOZERO);
+        else
+          _dataSource = next[0];
+      } else { // _mode == Mode::PREDICT
+        if ( numnonopt > 2 )
           throw std::domain_error("Too many non-option args");
+        else if ( numnonopt == 1 )
+          _modelFile = next[0];
+        else
+          _dataSource = next[0];
       }
     } else {
       if ( nonopt ) // options should come before required file inputs
@@ -170,8 +205,8 @@ Input::Input(int argc, char** argv) : _mode(LEARN),
 
       if ( next[0] == "--njobs" )
         _nJobs = Utils::convert<decltype(_nJobs)>(next[1], Utils::Nums::PLUSINT);
-      else { // specific to _mode == LEARN
-        if ( _mode != LEARN )
+      else { // specific to _mode == Mode::LEARN
+        if ( _mode != Mode::LEARN )
           throw std::domain_error(next[0] + " does not make sense when not in learn-model mode");
 
         if ( next[0] == "--xval" ) {
@@ -185,7 +220,7 @@ Input::Input(int argc, char** argv) : _mode(LEARN),
           throw std::domain_error("--seed does not make sense when not in learn-model mode");
         }
         else if ( next[0] == "--nsplit-features" ) {
-          if ( _mode != LEARN )
+          if ( _mode != Mode::LEARN )
             throw std::domain_error("--nsplit-features does not make sense when not in learn-model mode");
   
           if ( Utils::uppercase(next[1]) == "SQRT" )
