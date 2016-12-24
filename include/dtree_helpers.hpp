@@ -54,7 +54,7 @@ get_features(const std::string& s, char d1, char d2, std::unordered_map<featureI
       if ( label )
         throw std::domain_error("Feature does not have a value? " + next);
       label = true;
-      mp.insert(std::make_pair(LabelID, static_cast<featureID>(std::atoi(next.c_str()))));
+      mp.insert(std::make_pair(LabelID, Utils::convert<featureID>(next, Utils::Nums::PLUSINT)));
       pos1 = pos2+1;
       continue;
     }
@@ -76,7 +76,7 @@ get_features(const std::string& s, char d1, char d2, std::unordered_map<featureI
   return maxFeatureLabel + label;
 }
 
-std::pair<DataMatrix*, DataMatrixInv*>
+std::tuple<DataMatrix*, DataMatrixInv*, featureID>
 read_data(const std::string& source, bool oob, double oobPercent) {
   std::ifstream infile(source.c_str());
   if ( !infile )
@@ -154,7 +154,7 @@ read_data(const std::string& source, bool oob, double oobPercent) {
     }
     featureList.clear();
   } // while
-  return std::make_pair(dm, dmOOB);
+  return std::make_tuple(dm, dmOOB, finalNCols);
 }
 
 } // namespace Tree

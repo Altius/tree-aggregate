@@ -137,7 +137,7 @@ struct DecisionTreeParameters {
 
       _enums[Utils::uppercase("Criterion")] = static_cast<int>(_criterion);
       _enums[Utils::uppercase("SplitStrategy")] = static_cast<int>(_splitStrategy);
-      _enums[Utils::uppercase("SplitMaxFeatures")] = static_cast<int>(_splitMaxSelect);
+      _enums[Utils::uppercase("SplitMaxFeat")] = static_cast<int>(_splitMaxSelect);
       _enums[Utils::uppercase("ClassWeightType")] = static_cast<int>(_classWeightType);
 
       _argmap[Utils::uppercase("MaxDepth")] = Utils::Nums::PLUSINT; // zero means unused; grow full
@@ -162,7 +162,7 @@ struct DecisionTreeParameters {
     output << space << "MinLeafSamples=" << dtp._minLeafSamples;
     output << space << "MinPuritySplit=" << dtp._minPuritySplit;
     output << space << "UseZeroesInSplit=" << dtp._useImpliedZerosInSplitDecision;
-    output << space << "ClassWeighting=" << int(dtp._classWeightType);
+    output << space << "ClassWeightType=" << int(dtp._classWeightType);
     output << space << "Seed=" << dtp._seed;
     output << space << "SelectSplitNumeric=" << dtp._selectSplitNumeric;
     return output;
@@ -180,37 +180,13 @@ struct DecisionTreeParameters {
       auto jev = Utils::split(v, "=");
       if ( dtp._enums.find(jev[0]) != dtp._enums.end() ) {
         if ( jev[0] == Utils::uppercase("Criterion") ) {
-          if ( jev[1] == "GINI" )
-            dtp._criterion = Criterion::GINI;
-          else if ( jev[1] == "ENTROPY" )
-            dtp._criterion = Criterion::ENTROPY;
-          else
-            throw std::domain_error("Bad Criterion name: " + jev[1]);
+          dtp._criterion = static_cast<Criterion>(Utils::convert<int>(jev[1], Utils::Nums::INT));
         } else if ( jev[0] == Utils::uppercase("SplitStrategy") ) {
-          if ( jev[1] == "BEST" )
-            dtp._splitStrategy = SplitStrategy::BEST;
-          else if ( jev[1] == "RANDOM" )
-            dtp._splitStrategy = SplitStrategy::RANDOM;
-          else
-            throw std::domain_error("Bad SplitStrategy name: " + jev[1]);
+          dtp._splitStrategy = static_cast<SplitStrategy>(Utils::convert<int>(jev[1], Utils::Nums::INT));
         } else if ( jev[0] == Utils::uppercase("SPLITMAXFEAT") ) {
-          if ( jev[1] == "INT" )
-            dtp._splitMaxSelect = SplitMaxFeat::INT;
-          else if ( jev[1] == "FLT" )
-            dtp._splitMaxSelect = SplitMaxFeat::FLT;
-          else if ( jev[1] == "SQRT" )
-            dtp._splitMaxSelect = SplitMaxFeat::SQRT;
-          else if ( jev[1] == "LOG2" )
-            dtp._splitMaxSelect = SplitMaxFeat::LOG2;
-          else
-            throw std::domain_error("Bad SplitMaxFeat name: " + jev[1]);
+          dtp._splitMaxSelect = static_cast<SplitMaxFeat>(Utils::convert<int>(jev[1], Utils::Nums::INT));
         } else if ( jev[0] == Utils::uppercase("ClassWeightType") ) {
-          if ( jev[1] == "SAME" )
-            dtp._classWeightType = ClassWeightType::SAME;
-          else if ( jev[1] == "BALANCED" )
-            dtp._classWeightType = ClassWeightType::BALANCED;
-          else
-            throw std::domain_error("Bad ClassWeightType name: " + jev[1]);
+          dtp._classWeightType = static_cast<ClassWeightType>(Utils::convert<int>(jev[1], Utils::Nums::INT));
         } else {
           throw std::domain_error("Programming error: operator>> for DecisionTreeParameters");
         }
@@ -232,7 +208,7 @@ struct DecisionTreeParameters {
         else if ( jev[0] == Utils::uppercase("SelectSplitNumeric") )
           dtp.set_value(dtp._selectSplitNumeric, jev[0], jev[1]);
         else
-          throw std::domain_error("model error: operator>> for DecisionTreeParameters");
+          throw std::domain_error("model error: operator>> for DecisionTreeParameters: " + v);
       }
     } // for
 
@@ -253,7 +229,7 @@ private:
     auto f = _argmap.find(Utils::uppercase(s));
     if ( f == _argmap.end() )
       throw std::domain_error("Unknown Option: " + s);
-    return Utils::convert<T>(s, f->second);
+    return Utils::convert<T>(v, f->second);
   }
 
   void do_seed() {

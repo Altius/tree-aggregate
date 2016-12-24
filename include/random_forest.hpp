@@ -44,18 +44,30 @@ namespace Forest {
 
 struct RandomForest {
 
-  RandomForest(Tree::DecisionTreeParameters& dtp, const Tree::DataMatrix& dm, Tree::DataMatrixInv const* oobs)
+  // when learning
+  RandomForest(Tree::DecisionTreeParameters& dtp, Tree::DataMatrix const* dm, Tree::DataMatrixInv const* oobs)
     : _dtp(dtp), _dm(dm), _oobs(oobs) {}
 
+  // when predicting
+  explicit RandomForest(Tree::DecisionTreeParameters& dtp)
+    : _dtp(dtp), _dm(nullptr), _oobs(nullptr) {}
+
   void
-  build_trees(std::size_t nTrees, Tree::DecisionTreeParameters& dtp) {
+  build_trees(std::size_t nTrees) {
     for ( std::size_t idx = 0; idx < nTrees; ++idx ) {
-      auto nextTree = new Tree::DecisionTreeClassifier(dtp);
+      auto nextTree = new Tree::DecisionTreeClassifier(_dtp);
 // sjn use multithreading here when building trees
 // need to separate uniform prng from dtp, make dtp const above and in DTC class, and in main()
 // each thread receives its own prng with some unique offset from the given _seed
-      nextTree->learn(_dm);
+      nextTree->learn(*_dm);
       _forest.push_back(nextTree);
+    } // for
+  }
+
+  void
+  predict(const Tree::DataMatrix& data) {
+    for ( auto& tree : _forest ) {
+//      tree.Classify(
     } // for
   }
 
@@ -81,7 +93,7 @@ struct RandomForest {
   operator>>(std::istream&, RandomForest&);
 
   Tree::DecisionTreeParameters& _dtp;
-  const Tree::DataMatrix& _dm;
+  Tree::DataMatrix const* _dm;
   Tree::DataMatrixInv const* _oobs;
   std::list<Tree::DecisionTreeClassifier*> _forest;
 };

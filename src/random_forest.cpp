@@ -60,6 +60,7 @@ struct Input {
   double _oobPercent;
   std::size_t _nJobs;
   std::size_t _nTrees;
+  Tree::featureID _nFeatures;
   std::string _modelFile;
   std::string _dataSource;
   Tree::DecisionTreeParameters* _dtp;
@@ -69,6 +70,7 @@ struct Input {
     os << "number-jobs=" << input._nJobs;
     os << " " << "number-trees=" << input._nTrees;
     os << " " << "data-source=" << input._dataSource;
+    os << " " << "number-features=" << input._nFeatures;
     return os;
   }
 
@@ -87,6 +89,8 @@ struct Input {
             input._nTrees = Utils::convert<decltype(input._nTrees)>(pval[1], Utils::Nums::PLUSINT_NOZERO);
           else if ( pval[0] == "data-source" )
             input._dataSource = pval[1];
+          else if ( pval[0] == "number-features" )
+            input._nFeatures = Utils::convert<decltype(input._nFeatures)>(pval[1], Utils::Nums::PLUSINT_NOZERO);
         } else {
           throw std::domain_error("bad model file: Input Class");
         }
@@ -98,36 +102,48 @@ struct Input {
   ~Input();
 };
 
+Forest::RandomForest*
+read_model(Input&);
 
 int main(int argc, char** argv) {
   try {
     Input input(argc, argv);
-    Tree::DecisionTreeParameters& dtp = *input._dtp;
-// sjn probably need to make a _unif and _rng per thread (adding one to the core seed value) and pull it out of dtp so that it can be const (and randomforest class)
-    auto datapair = Tree::read_data(input._dataSource, input._oobTests, input._oobPercent);
-
-    Forest::RandomForest rf(dtp, *datapair.first, datapair.second);
-
 
     if ( input._mode == Input::Mode::LEARN ) {
-      rf.build_trees(input._nTrees, dtp);
+      constexpr std::size_t TRN = 0;
+      constexpr std::size_t TST = 1;
+      constexpr std::size_t MFT = 2;
+// sjn probably need to make a _unif and _rng per thread (adding one to the core seed value) and pull it out of dtp so that it can be const (and randomforest class)
+      Tree::DecisionTreeParameters& dtp = *input._dtp;
 
-//      build_trees(input._nTrees, dtp, *datapair.first, rf._forest);
-//      if ( datapair.second ) // x-validation
-//        auto stats = xval_estimates(rf._forest, *datapair.second);
+      // return triplet: Training Data, Optional Testing Data, and Max Feature ID
+      auto data = Tree::read_data(input._dataSource, input._oobTests, input._oobPercent);
+      input._nFeatures = std::get<MFT>(data);
+      Forest::RandomForest rf(dtp, std::get<TRN>(data), std::get<TST>(data));
+      rf.build_trees(input._nTrees);
+
+      if ( std::get<TRN>(data) )
+        delete std::get<TRN>(data);
+      if ( std::get<TST>(data) )
+        delete std::get<TST>(data);
+
+/*
+      if ( datapair.second ) { // x-validation
+        auto stats = xval_estimates(rf._forest, *datapair.second);
+        std::cerr << stats << std::endl;
+      }
+*/
+
+      // save parameters and learned trees
       std::cout << input << std::endl;
       std::cout << dtp << std::endl;
       std::cout << rf << std::endl;
-//        save_models(rf._forest, input._modelFile, input); // need to save input data as first line
     } else { // classify new features
-//      read_models(input._modelFile, rf._forest);
+      Forest::RandomForest* rf = read_model(input);
 //      classifications(classify(*datapair.first, rf._forest);
+      delete rf;
     }
 
-    if ( datapair.first )
-      delete datapair.first;
-    if ( datapair.second )
-      delete datapair.second;
     return EXIT_SUCCESS;
   } catch(Help h) {
     std::cout << Usage(argv[0]) << std::endl;
@@ -144,6 +160,19 @@ int main(int argc, char** argv) {
     std::cerr << "Unknown failure" << std::endl;
   }
   return EXIT_FAILURE;
+}
+
+Forest::RandomForest*
+read_model(Input& input) {
+  std::ifstream infile(input._modelFile.c_str());
+  if ( !infile )
+    throw std::domain_error("Unable to locate model file given: " + input._modelFile);
+
+  infile >> input;
+  infile >> *input._dtp;
+  Forest::RandomForest* rf = new Forest::RandomForest(*input._dtp);
+  infile >> *rf;
+  return rf;
 }
 
 Input::Input(int argc, char** argv) : _mode(Mode::LEARN),
