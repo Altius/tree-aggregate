@@ -67,59 +67,125 @@ struct Input {
   std::string _dataSource;
   DecisionTreeParameters* _dtp;
 
+  friend std::ostream&
+  operator<<(std::ostream& os, const Input& input) {
+    os << "number-jobs=" << input._nJobs;
+    os << " " << "number-trees=" << input._nTrees;
+    os << " " << "data-source=" << input._dataSource;
+    return os;
+  }
+
+  friend std::istream&
+  operator>>(std::istream& is, Input& input) {
+    input._mode = Mode::PREDICT;
+    Utils::ByLine bl;
+    if ( is >> bl ) {
+      auto params = Utils::split(bl, " ");
+      for ( auto& i : params )  {
+        auto pval = Utils::split(i, "=");
+        if ( pval.size()==2 ) {
+          if ( pval[0] == "number-jobs" )
+            input._nJobs = Utils::convert<decltype(input._nJobs)>(pval[1], Utils::Nums::PLUSINT_NOZERO);
+          else if ( pval[0] == "number-trees" )
+            input._nTrees = Utils::convert<decltype(input._nTrees)>(pval[1], Utils::Nums::PLUSINT_NOZERO);
+          else if ( pval[0] == "data-source" )
+            input._dataSource = pval[1];
+        } else {
+          throw std::domain_error("bad model file: Input Class");
+        }
+      } // for
+    }
+    return is;
+  }
+
   ~Input();
 };
 
 struct RandomForest {
-  RandomForest(const DataMatrix& dm, const DataMatrixInv& oobs) : _dm(dm), _oobs(oobs) {}
+  RandomForest(DecisionTreeParameters& dtp, const DataMatrix& dm, DataMatrixInv const* oobs)
+    : _dtp(dtp), _dm(dm), _oobs(oobs) {}
 
+  void
+  build_trees(std::size_t nTrees, DecisionTreeParameters& dtp) {
+    for ( std::size_t idx = 0; idx < nTrees; ++idx ) {
+      auto nextTree = new DecisionTreeClassifier(dtp);
+// sjn use multithreading here when building trees
+// need to separate uniform prng from dtp, make dtp const above and in DTC class, and in main()
+// each thread receives its own prng with some unique offset from the given _seed
+      nextTree->learn(_dm);
+      _forest.push_back(nextTree);
+    } // for
+  }
+
+  ~RandomForest() {
+    for ( auto ntree : _forest )
+      delete ntree;
+  }
+
+  friend std::ostream&
+  operator<<(std::ostream&, const RandomForest&);
+
+  friend std::istream&
+  operator>>(std::istream&, RandomForest&);
+
+  DecisionTreeParameters& _dtp;
   const DataMatrix& _dm;
-  const DataMatrixInv& _oobs;
+  DataMatrixInv const* _oobs;
   std::list<DecisionTreeClassifier*> _forest;
 };
+
+std::ostream&
+operator<<(std::ostream& os, const RandomForest& rf) {
+  for ( auto& a : rf._forest )
+    os << *a << std::endl;
+  return os;
+}
+
+std::istream&
+operator>>(std::istream& is, RandomForest& rf) {
+  DecisionTreeClassifier tmp(rf._dtp);
+  while ( is >> tmp ) {
+    rf._forest.push_back(new DecisionTreeClassifier(tmp));
+    tmp._nodes.clear();
+  } // while
+  return is;
+}
 
 double GetVariableImportance(const RandomForest& rf) {
 return 0;
 }
 
-void
-build_trees(std::size_t nTrees, DecisionTreeParameters& dtp, const DataMatrix& train, std::list<DecisionTreeClassifier*>& trees) {
-  for ( std::size_t idx = 0; idx < nTrees; ++idx ) {
-    auto nextTree = new DecisionTreeClassifier(dtp);
-// sjn use multithreading here when building trees
-// need to separate uniform prng from dtp, make dtp const above and in DTC class, and in main()
-// each thread receives its own prng with some unique offset from the given _seed
-    nextTree->learn(train);
-    trees.push_back(nextTree);
-  } // for
-}
-
-
 int main(int argc, char** argv) {
   try {
     Input input(argc, argv);
-// sjn probably need to make a _unif and _rng per thread (adding one to the core seed value) and pull it out of dtp so that it can be const
+    DecisionTreeParameters& dtp = *input._dtp;
+// sjn probably need to make a _unif and _rng per thread (adding one to the core seed value) and pull it out of dtp so that it can be const (and randomforest class)
     auto datapair = read_data(input._dataSource, input._oobTests, input._oobPercent);
 
-    DecisionTreeParameters& dtp = *input._dtp;
-    std::list<DecisionTreeClassifier*> dtcs;
+    RandomForest rf(dtp, *datapair.first, datapair.second);
+
+
     if ( input._mode == Input::Mode::LEARN ) {
-      build_trees(input._nTrees, dtp, *datapair.first, dtcs);
+      rf.build_trees(input._nTrees, dtp);
+
+//      build_trees(input._nTrees, dtp, *datapair.first, rf._forest);
 //      if ( datapair.second ) // x-validation
-//        auto stats = xval_estimates(dtcs, *datapair.second);
-//      if ( input._saveModels )
-//        save_models(dtcs, input._modelFile, input); // need to save input data as first line
+//        auto stats = xval_estimates(rf._forest, *datapair.second);
+      if ( input._saveModels ) {
+        std::cout << input << std::endl;
+        std::cout << dtp << std::endl;
+        std::cout << rf << std::endl;
+      }
+//        save_models(rf._forest, input._modelFile, input); // need to save input data as first line
     } else { // classify new features
-//      read_models(input._modelFile, dtcs);
-//      classifications(classify(*datapair.first, dtcs);
+//      read_models(input._modelFile, rf._forest);
+//      classifications(classify(*datapair.first, rf._forest);
     }
 
     if ( datapair.first )
       delete datapair.first;
     if ( datapair.second )
       delete datapair.second;
-    for ( auto ntree : dtcs )
-      delete ntree;
     return EXIT_SUCCESS;
   } catch(Help h) {
     std::cout << Usage(argv[0]) << std::endl;

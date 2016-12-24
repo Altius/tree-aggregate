@@ -450,36 +450,40 @@ protected:
       const std::size_t level = std::get<LEVEL>(e);
 
       current = Node(std::get<PARENT_CPTR>(e), nullptr, nullptr);
-      p = find_split(dm, nSplitFeatures, std::get<LC_MON>(e));
-      std::get<LC_CPTR>(current) = new Core(std::get<FID>(p), std::get<SPV>(p), noLeaf, noDecision);
+      if ( std::get<LC_MON>(e).any() ) {
+        p = find_split(dm, nSplitFeatures, std::get<LC_MON>(e));
+        std::get<LC_CPTR>(current) = new Core(std::get<FID>(p), std::get<SPV>(p), noLeaf, noDecision);
 
-      q = find_split(dm, nSplitFeatures, std::get<RC_MON>(e));
-      std::get<RC_CPTR>(current) = new Core(std::get<FID>(q), std::get<SPV>(q), noLeaf, noDecision);
+        parentMonitor = std::get<LC_MON>(e);
+        rightChildMonitor = std::get<MON>(p);
+        leftChildMonitor = ~rightChildMonitor & parentMonitor;
+        auto nextl = std::make_tuple(std::get<LC_CPTR>(current), leftChildMonitor, rightChildMonitor, level+1);
 
-      parentMonitor = std::get<LC_MON>(e);
-      rightChildMonitor = std::get<MON>(p);
-      leftChildMonitor = ~rightChildMonitor & parentMonitor;
-      auto nextl = std::make_tuple(std::get<LC_CPTR>(current), leftChildMonitor, rightChildMonitor, level+1);
-
-      parentMonitor = std::get<RC_MON>(e);
-      rightChildMonitor = std::get<MON>(q);
-      leftChildMonitor = ~rightChildMonitor & parentMonitor;
-      auto nextr = std::make_tuple(std::get<RC_CPTR>(current), leftChildMonitor, rightChildMonitor, level+1);
-
-      if ( !done(std::get<PUR>(std::get<LPU>(p)), level, nleaves) )
-        que.push(nextl);
-      else {
-        std::get<ISLEAF>(*std::get<LC_CPTR>(current)) = true;
-        std::get<DEC>(*std::get<LC_CPTR>(current)) = std::get<PUR>(std::get<LPU>(p));
-        ++nleaves;
+        if ( !done(std::get<PUR>(std::get<LPU>(p)), level, nleaves) )
+          que.push(nextl);
+        else {
+          std::get<ISLEAF>(*std::get<LC_CPTR>(current)) = true;
+          std::get<DEC>(*std::get<LC_CPTR>(current)) = std::get<PUR>(std::get<LPU>(p));
+          ++nleaves;
+        }
       }
 
-      if ( !done(std::get<PUR>(std::get<RPU>(q)), level, nleaves) )
-        que.push(nextr);
-      else {
-        std::get<ISLEAF>(*std::get<RC_CPTR>(current)) = true;
-        std::get<DEC>(*std::get<RC_CPTR>(current)) = std::get<PUR>(std::get<RPU>(p));
-        ++nleaves;
+      if ( std::get<RC_MON>(e).any() ) {
+        q = find_split(dm, nSplitFeatures, std::get<RC_MON>(e));
+        std::get<RC_CPTR>(current) = new Core(std::get<FID>(q), std::get<SPV>(q), noLeaf, noDecision);
+
+        parentMonitor = std::get<RC_MON>(e);
+        rightChildMonitor = std::get<MON>(q);
+        leftChildMonitor = ~rightChildMonitor & parentMonitor;
+        auto nextr = std::make_tuple(std::get<RC_CPTR>(current), leftChildMonitor, rightChildMonitor, level+1);
+
+        if ( !done(std::get<PUR>(std::get<RPU>(q)), level, nleaves) )
+          que.push(nextr);
+        else {
+          std::get<ISLEAF>(*std::get<RC_CPTR>(current)) = true;
+          std::get<DEC>(*std::get<RC_CPTR>(current)) = std::get<PUR>(std::get<RPU>(p));
+          ++nleaves;
+        }
       }
 
       _nodes.push_back(current);
@@ -546,7 +550,7 @@ public:
   friend // read in a model previously created
   std::istream&
   operator>>(std::istream& input, DecisionTreeClassifier& dtc) {
-    input >> dtc._dtp; // header row is for DecisionTreeParamters
+// sjn : should be done already   input >> dtc._dtp; // header row is for DecisionTreeParamters
     if (!input)
       return input;
 
@@ -750,10 +754,12 @@ protected:
       case Criterion::GINI:
         return split_gini(dm, featColumn, _dtp._splitStrategy, _dtp._useImpliedZerosInSplitDecision);
       case Criterion::ENTROPY:
-break;
-//        return split_entropy(dm, featColumn, _dtp._splitStrategy, _dtp._useImpliedZerosInSplitDecision);
-    }
 return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
+//        return split_entropy(dm, featColumn, _dtp._splitStrategy, _dtp._useImpliedZerosInSplitDecision);
+      default:
+          throw std::domain_error("Unknown criterion in evaluate()");
+    }
+
   }
 
   // find_split() returns feature ID, split value and monitor showing bit masking -> consider only those set
@@ -774,21 +780,24 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
       while (true) {
 // sjn: could loop forever on edge cases - fix this
         col = static_cast<featureID>(std::round(_dtp._unif(_dtp._rng) * numFeatures));
-//        if ( col > 0 && selectedFeats.insert(col).second && !allZeroes(dm, col, mask) )
-//          break;
-std::cout << col;
+        if ( col > 0 && selectedFeats.insert(col).second && !allZeroes(dm, col, mask) )
+          break;
+/*
+std::cerr << col;
 auto foo = selectedFeats.insert(col).second;
-std::cout << " " << foo;
-std::cout << " " << !allZeroes(dm, col, mask);
-std::cout << " " << mask;
+std::cerr << " " << foo;
+std::cerr << " " << !allZeroes(dm, col, mask);
+std::cerr << " " << mask;
 auto& foo2 = column(dm, col);
-std::cout << " ";
-std::copy(foo2.begin(), foo2.end(), std::ostream_iterator<dtype>(std::cout, " "));
-//std::cout << " " << column(dm, col);
-std::cout << std::endl;
+std::cerr << " ";
+std::copy(foo2.begin(), foo2.end(), std::ostream_iterator<dtype>(std::cerr, " "));
+//std::cerr << " " << column(dm, col);
+std::cerr << std::endl;
 if ( col > 0 && foo && !allZeroes(dm, col, mask) )
 break;
+*/
       } // while
+//std::cerr << "ok: " << col << std::endl;
       auto val = evaluate(dm, col); // return split quality, split value, ldec/lpurity, rdec/rpurity
       if ( std::get<QS>(val) > currBest ) {
         currBest = std::get<QS>(val);
@@ -816,6 +825,7 @@ break;
     return std::make_tuple(currCol, threshold, mask, currLPurity, currRPurity);
   }
 
+public: // sjn, for now
   DecisionTreeParameters& _dtp;
   std::list<Node> _nodes; // root is first element
 };
