@@ -165,7 +165,6 @@ struct DecisionTreeParameters {
     output << space << "ClassWeighting=" << int(dtp._classWeightType);
     output << space << "Seed=" << dtp._seed;
     output << space << "SelectSplitNumeric=" << dtp._selectSplitNumeric;
-    output << std::endl;
     return output;
   }
 
@@ -463,7 +462,7 @@ protected:
           que.push(nextl);
         else {
           std::get<ISLEAF>(*std::get<LC_CPTR>(current)) = true;
-          std::get<DEC>(*std::get<LC_CPTR>(current)) = std::get<PUR>(std::get<LPU>(p));
+          std::get<DECISION>(*std::get<LC_CPTR>(current)) = std::get<DEC>(std::get<LPU>(p));
           ++nleaves;
         }
       }
@@ -481,7 +480,7 @@ protected:
           que.push(nextr);
         else {
           std::get<ISLEAF>(*std::get<RC_CPTR>(current)) = true;
-          std::get<DEC>(*std::get<RC_CPTR>(current)) = std::get<PUR>(std::get<RPU>(p));
+          std::get<DECISION>(*std::get<RC_CPTR>(current)) = std::get<DEC>(std::get<RPU>(p));
           ++nleaves;
         }
       }
@@ -550,7 +549,6 @@ public:
   friend // read in a model previously created
   std::istream&
   operator>>(std::istream& input, DecisionTreeClassifier& dtc) {
-// sjn : should be done already   input >> dtc._dtp; // header row is for DecisionTreeParamters
     if (!input)
       return input;
 
@@ -605,7 +603,6 @@ public:
     static constexpr std::size_t ILF = dtc.ISLEAF;
     static constexpr std::size_t DEC = dtc.DECISION;
 
-    output << dtc._dtp << std::endl;
     for ( auto& n : dtc._nodes ) {
       const Core& parent = *std::get<PAR>(n);
       output << std::get<FID>(parent) << " " << std::get<SPV>(parent) << " "
@@ -613,12 +610,11 @@ public:
     } // for
 
     Core const* lchild = std::get<LCHILD>(dtc._nodes.back());
-    Core const* rchild = std::get<RCHILD>(dtc._nodes.back());
-
     if ( lchild )
       output << std::get<FID>(*lchild) << " " << std::get<SPV>(*lchild) << " "
              << std::get<ILF>(*lchild) << " " << std::get<DEC>(*lchild) << std::endl;
 
+    Core const* rchild = std::get<RCHILD>(dtc._nodes.back());
     if ( rchild )
       output << std::get<FID>(*rchild) << " " << std::get<SPV>(*rchild) << " "
              << std::get<ILF>(*rchild) << " " << std::get<DEC>(*rchild) << std::endl;
@@ -782,22 +778,8 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
         col = static_cast<featureID>(std::round(_dtp._unif(_dtp._rng) * numFeatures));
         if ( col > 0 && selectedFeats.insert(col).second && !allZeroes(dm, col, mask) )
           break;
-/*
-std::cerr << col;
-auto foo = selectedFeats.insert(col).second;
-std::cerr << " " << foo;
-std::cerr << " " << !allZeroes(dm, col, mask);
-std::cerr << " " << mask;
-auto& foo2 = column(dm, col);
-std::cerr << " ";
-std::copy(foo2.begin(), foo2.end(), std::ostream_iterator<dtype>(std::cerr, " "));
-//std::cerr << " " << column(dm, col);
-std::cerr << std::endl;
-if ( col > 0 && foo && !allZeroes(dm, col, mask) )
-break;
-*/
       } // while
-//std::cerr << "ok: " << col << std::endl;
+
       auto val = evaluate(dm, col); // return split quality, split value, ldec/lpurity, rdec/rpurity
       if ( std::get<QS>(val) > currBest ) {
         currBest = std::get<QS>(val);

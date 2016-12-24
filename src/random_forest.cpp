@@ -34,11 +34,9 @@
 #include <utility>
 #include <vector>
 
-#include "../include/dtree.hpp"
-#include "../include/dtree-input.hpp"
+#include "../include/dtree_helpers.hpp"
+#include "../include/random_forest.hpp"
 #include "../include/utils.hpp"
-
-using namespace Tree;
 
 std::string Usage(const std::string& progName) {
   std::string msg;
@@ -58,14 +56,13 @@ struct Input {
   enum class Mode { LEARN, PREDICT };
 
   Mode _mode;
-  bool _saveModels;
   bool _oobTests;
   double _oobPercent;
   std::size_t _nJobs;
   std::size_t _nTrees;
   std::string _modelFile;
   std::string _dataSource;
-  DecisionTreeParameters* _dtp;
+  Tree::DecisionTreeParameters* _dtp;
 
   friend std::ostream&
   operator<<(std::ostream& os, const Input& input) {
@@ -101,68 +98,15 @@ struct Input {
   ~Input();
 };
 
-struct RandomForest {
-  RandomForest(DecisionTreeParameters& dtp, const DataMatrix& dm, DataMatrixInv const* oobs)
-    : _dtp(dtp), _dm(dm), _oobs(oobs) {}
-
-  void
-  build_trees(std::size_t nTrees, DecisionTreeParameters& dtp) {
-    for ( std::size_t idx = 0; idx < nTrees; ++idx ) {
-      auto nextTree = new DecisionTreeClassifier(dtp);
-// sjn use multithreading here when building trees
-// need to separate uniform prng from dtp, make dtp const above and in DTC class, and in main()
-// each thread receives its own prng with some unique offset from the given _seed
-      nextTree->learn(_dm);
-      _forest.push_back(nextTree);
-    } // for
-  }
-
-  ~RandomForest() {
-    for ( auto ntree : _forest )
-      delete ntree;
-  }
-
-  friend std::ostream&
-  operator<<(std::ostream&, const RandomForest&);
-
-  friend std::istream&
-  operator>>(std::istream&, RandomForest&);
-
-  DecisionTreeParameters& _dtp;
-  const DataMatrix& _dm;
-  DataMatrixInv const* _oobs;
-  std::list<DecisionTreeClassifier*> _forest;
-};
-
-std::ostream&
-operator<<(std::ostream& os, const RandomForest& rf) {
-  for ( auto& a : rf._forest )
-    os << *a << std::endl;
-  return os;
-}
-
-std::istream&
-operator>>(std::istream& is, RandomForest& rf) {
-  DecisionTreeClassifier tmp(rf._dtp);
-  while ( is >> tmp ) {
-    rf._forest.push_back(new DecisionTreeClassifier(tmp));
-    tmp._nodes.clear();
-  } // while
-  return is;
-}
-
-double GetVariableImportance(const RandomForest& rf) {
-return 0;
-}
 
 int main(int argc, char** argv) {
   try {
     Input input(argc, argv);
-    DecisionTreeParameters& dtp = *input._dtp;
+    Tree::DecisionTreeParameters& dtp = *input._dtp;
 // sjn probably need to make a _unif and _rng per thread (adding one to the core seed value) and pull it out of dtp so that it can be const (and randomforest class)
-    auto datapair = read_data(input._dataSource, input._oobTests, input._oobPercent);
+    auto datapair = Tree::read_data(input._dataSource, input._oobTests, input._oobPercent);
 
-    RandomForest rf(dtp, *datapair.first, datapair.second);
+    Forest::RandomForest rf(dtp, *datapair.first, datapair.second);
 
 
     if ( input._mode == Input::Mode::LEARN ) {
@@ -171,11 +115,9 @@ int main(int argc, char** argv) {
 //      build_trees(input._nTrees, dtp, *datapair.first, rf._forest);
 //      if ( datapair.second ) // x-validation
 //        auto stats = xval_estimates(rf._forest, *datapair.second);
-      if ( input._saveModels ) {
-        std::cout << input << std::endl;
-        std::cout << dtp << std::endl;
-        std::cout << rf << std::endl;
-      }
+      std::cout << input << std::endl;
+      std::cout << dtp << std::endl;
+      std::cout << rf << std::endl;
 //        save_models(rf._forest, input._modelFile, input); // need to save input data as first line
     } else { // classify new features
 //      read_models(input._modelFile, rf._forest);
@@ -191,7 +133,7 @@ int main(int argc, char** argv) {
     std::cout << Usage(argv[0]) << std::endl;
     return EXIT_SUCCESS;
   } catch(Version v) {
-    std::cout << FileFormatVersion << std::endl; // given in dtree.hpp
+    std::cout << Tree::FileFormatVersion << std::endl; // given in dtree.hpp
   } catch(char const* c) {
     std::cerr << c << std::endl;
   } catch(std::string& s) {
@@ -205,12 +147,13 @@ int main(int argc, char** argv) {
 }
 
 Input::Input(int argc, char** argv) : _mode(Mode::LEARN),
-                                      _saveModels(false),
                                       _oobTests(false),
                                       _oobPercent(0),
                                       _nJobs(1),
                                       _nTrees(0),
                                       _dtp(nullptr) {
+  using namespace Tree;
+
   for ( int i = 1; i < argc; ++i ) {
     if ( argv[i] == std::string("--help") )
       throw(Help());
@@ -273,7 +216,7 @@ Input::Input(int argc, char** argv) : _mode(Mode::LEARN),
         _nJobs = Utils::convert<decltype(_nJobs)>(next[1], Utils::Nums::PLUSINT);
       else { // specific to _mode == Mode::LEARN
         if ( _mode != Mode::LEARN )
-          throw std::domain_error(next[0] + " does not make sense when not in learn-model mode");
+          throw std::domain_error(next[0] + " does not make sense when not in learn mode");
 
         if ( next[0] == "--xval" ) {
           _oobTests = true;
@@ -283,12 +226,8 @@ Input::Input(int argc, char** argv) : _mode(Mode::LEARN),
         }
         else if ( next[0] == "--seed" ) {
           seed = Utils::convert<decltype(seed)>(next[1], Utils::Nums::PLUSBIGINT);
-          throw std::domain_error("--seed does not make sense when not in learn-model mode");
         }
         else if ( next[0] == "--nsplit-features" ) {
-          if ( _mode != Mode::LEARN )
-            throw std::domain_error("--nsplit-features does not make sense when not in learn-model mode");
-  
           if ( Utils::uppercase(next[1]) == "SQRT" )
             splitMaxFeat = SplitMaxFeat::SQRT;
           else if ( Utils::uppercase(next[1]) == "LOG2" )
@@ -311,11 +250,11 @@ Input::Input(int argc, char** argv) : _mode(Mode::LEARN),
     }
   } // for
 
-  _dtp = new DecisionTreeParameters(
+  _dtp = new Tree::DecisionTreeParameters(
                                     criterion, strategy, splitMaxFeat, splitVal,
                                     mxDepth, mxLeaves, minLeafSamples, minPurity,
                                     useZeroes, classWeight, seed
-                                   );
+                                         );
 }
 
 Input::~Input() {
