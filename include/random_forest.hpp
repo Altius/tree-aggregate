@@ -65,7 +65,7 @@ struct RandomForest {
   }
 
   void
-  predict(const Tree::DataMatrix& data) {
+  predict(Tree::DataMatrixInv const* data) {
     for ( auto& tree : _forest ) {
 //      tree.Classify(
     } // for
@@ -100,8 +100,13 @@ struct RandomForest {
 
 std::ostream&
 operator<<(std::ostream& os, const RandomForest& rf) {
-  for ( auto& a : rf._forest )
-    os << "[" << std::endl << *a << "]" << std::endl;
+  bool any = false;
+  for ( auto& tree : rf._forest ) {
+    if ( any )
+      os << std::endl;
+    os << *tree;
+    any = true;
+  } // for
   return os;
 }
 

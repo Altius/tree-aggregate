@@ -76,6 +76,7 @@ get_features(const std::string& s, char d1, char d2, std::unordered_map<featureI
   return maxFeatureLabel + label;
 }
 
+// for learning
 std::tuple<DataMatrix*, DataMatrixInv*, featureID>
 read_data(const std::string& source, bool oob, double oobPercent) {
   std::ifstream infile(source.c_str());
@@ -155,6 +156,15 @@ read_data(const std::string& source, bool oob, double oobPercent) {
     featureList.clear();
   } // while
   return std::make_tuple(dm, dmOOB, finalNCols);
+}
+
+// for predictions
+std::tuple<DataMatrixInv*, featureID>
+read_data(const std::string& source) {
+  auto data = read_data(source, false, 0);
+  DataMatrixInv dmi(trans(*std::get<0>(data)));
+//  return std::make_tuple(dmi, std::get<2>(data));
+return std::make_tuple(nullptr, 0);
 }
 
 } // namespace Tree

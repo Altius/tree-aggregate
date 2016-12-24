@@ -49,6 +49,7 @@ std::string Usage(const std::string& progName) {
 
 struct Help {};
 struct Version {};
+struct NoInput {};
 
 struct Input {
   Input(int argc, char** argv);
@@ -110,15 +111,17 @@ int main(int argc, char** argv) {
     Input input(argc, argv);
 
     if ( input._mode == Input::Mode::LEARN ) {
-      constexpr std::size_t TRN = 0;
-      constexpr std::size_t TST = 1;
-      constexpr std::size_t MFT = 2;
 // sjn probably need to make a _unif and _rng per thread (adding one to the core seed value) and pull it out of dtp so that it can be const (and randomforest class)
-      Tree::DecisionTreeParameters& dtp = *input._dtp;
 
       // return triplet: Training Data, Optional Testing Data, and Max Feature ID
+      constexpr std::size_t TRN = 0;
+      constexpr std::size_t TST = 1;
+      constexpr std::size_t MXFT = 2;
       auto data = Tree::read_data(input._dataSource, input._oobTests, input._oobPercent);
-      input._nFeatures = std::get<MFT>(data);
+
+      Tree::DecisionTreeParameters& dtp = *input._dtp;
+
+      input._nFeatures = std::get<MXFT>(data);
       Forest::RandomForest rf(dtp, std::get<TRN>(data), std::get<TST>(data));
       rf.build_trees(input._nTrees);
 
@@ -139,8 +142,18 @@ int main(int argc, char** argv) {
       std::cout << dtp << std::endl;
       std::cout << rf << std::endl;
     } else { // classify new features
+      // returns doublet: Data to be classified and Max Feature ID
+      constexpr std::size_t CLF = 0;
+      constexpr std::size_t MXFT = 1;
+      auto data = Tree::read_data(input._dataSource);
+
       Forest::RandomForest* rf = read_model(input);
-//      classifications(classify(*datapair.first, rf._forest);
+      if ( input._nFeatures < std::get<MXFT>(data) )
+        throw std::domain_error("Data to be classified has more features than were used to do training!");
+
+      rf->predict(std::get<CLF>(data));
+
+      delete std::get<CLF>(data);
       delete rf;
     }
 
@@ -150,6 +163,9 @@ int main(int argc, char** argv) {
     return EXIT_SUCCESS;
   } catch(Version v) {
     std::cout << Tree::FileFormatVersion << std::endl; // given in dtree.hpp
+    return EXIT_SUCCESS;
+  } catch(NoInput n) {
+    std::cout << Usage(argv[0]) << std::endl;
   } catch(char const* c) {
     std::cerr << c << std::endl;
   } catch(std::string& s) {
@@ -185,13 +201,16 @@ Input::Input(int argc, char** argv) : _mode(Mode::LEARN),
 
   for ( int i = 1; i < argc; ++i ) {
     if ( argv[i] == std::string("--help") )
-      throw(Help());
+      throw Help();
     else if ( argv[i] == std::string("--version") )
-      throw(Version());
+      throw Version();
   } // for
 
-  if ( argc < 3 )
+  if ( argc < 3 ) {
+    if ( argc == 1 )
+      throw NoInput();
     throw std::domain_error("Wrong # args");
+  }
 
   std::string nxt = argv[1];
   if ( nxt == "predict" )

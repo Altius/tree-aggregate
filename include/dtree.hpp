@@ -532,8 +532,10 @@ public:
     DecisionTreeClassifier::SplitValue spv; // split value?
     bool ilf; // is leaf?
     std::size_t dsn; // decision?
+    std::string open_bracket, closed_bracket;
 
     std::queue<Core*> que;
+input >> open_bracket;
     input >> fid;
     input >> spv;
     input >> ilf;
@@ -564,6 +566,7 @@ public:
       dtc._nodes.push_back(Node(parent, left, right));
       que.pop();
     } // while
+input >> open_bracket;
     return input;
   }
 
@@ -579,21 +582,31 @@ public:
     static constexpr std::size_t ILF = dtc.ISLEAF;
     static constexpr std::size_t DEC = dtc.DECISION;
 
+    output << "[" << std::endl;
+
+    const std::size_t na = 0;
     for ( auto& n : dtc._nodes ) {
       const Core& parent = *std::get<PAR>(n);
+      bool isleaf = std::get<ILF>(parent);
       output << std::get<FID>(parent) << " " << std::get<SPV>(parent) << " "
-             << std::get<ILF>(parent) << " " << std::get<DEC>(parent) << std::endl;
+             << isleaf << " " << (isleaf ? std::get<DEC>(parent) : na) << std::endl;
     } // for
 
     Core const* lchild = std::get<LCHILD>(dtc._nodes.back());
-    if ( lchild )
+    if ( lchild ) {
+      bool isleaf = std::get<ILF>(*lchild);
       output << std::get<FID>(*lchild) << " " << std::get<SPV>(*lchild) << " "
-             << std::get<ILF>(*lchild) << " " << std::get<DEC>(*lchild) << std::endl;
+             << isleaf << " " << (isleaf ? std::get<DEC>(*lchild) : na) << std::endl;
+    }
 
     Core const* rchild = std::get<RCHILD>(dtc._nodes.back());
-    if ( rchild )
+    if ( rchild ) {
+      bool isleaf = std::get<ILF>(*rchild);
       output << std::get<FID>(*rchild) << " " << std::get<SPV>(*rchild) << " "
-             << std::get<ILF>(*rchild) << " " << std::get<DEC>(*rchild) << std::endl;
+             << isleaf << " " << (isleaf ? std::get<DEC>(*rchild) : na) << std::endl;
+    }
+
+    output << "]";
     return output;
   }
 
