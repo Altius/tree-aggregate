@@ -312,16 +312,14 @@ struct DecisionTreeClassifier {
   explicit DecisionTreeClassifier(DecisionTreeParameters& dtp)
     : _dtp(dtp) {}
 
-  std::list<label>
-  classify(const DataMatrixInv& newData) const {
+  void
+  classify(const DataMatrixInv& newData, std::vector<label>& predictions) const {
     if ( _nodes.empty() )
       throw std::domain_error("Need to learn a model before applying one!");
 
-    std::list<label> toRtn;
     std::size_t sz = newData.size1();
     for ( std::size_t i = 0; i < sz; ++i )
-      toRtn.push_back(classify(row(newData, i)));
-    return toRtn;
+      predictions[i] = classify(row(newData, i));
   }
 
   label
@@ -534,8 +532,9 @@ public:
     std::size_t dsn; // decision?
     std::string open_bracket, closed_bracket;
 
+    input >> open_bracket;
+
     std::queue<Core*> que;
-input >> open_bracket;
     input >> fid;
     input >> spv;
     input >> ilf;
@@ -566,7 +565,9 @@ input >> open_bracket;
       dtc._nodes.push_back(Node(parent, left, right));
       que.pop();
     } // while
-input >> open_bracket;
+
+    input >> closed_bracket;
+
     return input;
   }
 

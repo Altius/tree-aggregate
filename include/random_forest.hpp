@@ -26,6 +26,7 @@
 #ifndef __ALTIUS_RANDFOREST_HPP__
 #define __ALTIUS_RANDFOREST_HPP__
 
+#include <algorithm>
 #include <cstdlib>
 #include <ctime>
 #include <exception>
@@ -64,11 +65,21 @@ struct RandomForest {
     } // for
   }
 
-  void
-  predict(Tree::DataMatrixInv const* data) {
+  std::vector<Tree::label>
+  predict(Tree::DataMatrixInv const* data, std::size_t mxlabel) const {
+// sjn multithread this
+    std::vector<std::vector<Tree::label>> results(data->size1(), std::vector<Tree::label>(mxlabel, (Tree::label)0));
     for ( auto& tree : _forest ) {
-//      tree.Classify(
+      std::vector<Tree::label> predictions(data->size1(), 0);
+      tree->classify(*data, predictions);
+      for ( std::size_t i = 0; i < predictions.size(); ++i )
+        results[i][predictions[i]]++;
     } // for
+
+    std::vector<Tree::label> final(data->size1(), (Tree::label)0);
+    for ( std::size_t i = 0; i < results.size(); ++i )
+      final[i] = static_cast<Tree::label>(std::max_element(results[i].begin(), results[i].end()) - results[i].begin());
+    return final;
   }
 
   double

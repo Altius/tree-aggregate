@@ -78,7 +78,7 @@ get_features(const std::string& s, char d1, char d2, std::unordered_map<featureI
 
 // for learning
 std::tuple<DataMatrix*, DataMatrixInv*, featureID>
-read_data(const std::string& source, bool oob, double oobPercent) {
+read_data(const std::string& source, bool oob, double oobPercent, bool addone=false) {
   std::ifstream infile(source.c_str());
   if ( !infile )
     throw std::domain_error("Unable to find/open: " + source);
@@ -134,7 +134,7 @@ read_data(const std::string& source, bool oob, double oobPercent) {
     dmOOB = new DataMatrixInv(oobRows, nCols, nNonZeroesOOB);
   }
 
-  const std::size_t finalNCols = nCols;
+  const std::size_t finalNCols = nCols+addone;
 
   DataMatrix* dm = new DataMatrix(nRows, finalNCols, nNonZeroes);
   DataMatrix& dmref = *dm;
@@ -161,10 +161,11 @@ read_data(const std::string& source, bool oob, double oobPercent) {
 // for predictions
 std::tuple<DataMatrixInv*, featureID>
 read_data(const std::string& source) {
-  auto data = read_data(source, false, 0);
-  DataMatrixInv dmi(trans(*std::get<0>(data)));
-//  return std::make_tuple(dmi, std::get<2>(data));
-return std::make_tuple(nullptr, 0);
+  const bool addonecol = true; // no label and features are 1-based
+  auto data = read_data(source, false, 0, addonecol);
+  DataMatrixInv* dmi = new DataMatrixInv(trans(*std::get<0>(data)));
+  delete std::get<0>(data);
+  return std::make_tuple(dmi, std::get<2>(data));
 }
 
 } // namespace Tree

@@ -61,7 +61,8 @@ struct Input {
   double _oobPercent;
   std::size_t _nJobs;
   std::size_t _nTrees;
-  Tree::featureID _nFeatures;
+  std::size_t _nFeatures;
+  std::size_t _nLabels;
   std::string _modelFile;
   std::string _dataSource;
   Tree::DecisionTreeParameters* _dtp;
@@ -72,6 +73,7 @@ struct Input {
     os << " " << "number-trees=" << input._nTrees;
     os << " " << "data-source=" << input._dataSource;
     os << " " << "number-features=" << input._nFeatures;
+    os << " " << "max-label=" << input._nLabels;
     return os;
   }
 
@@ -92,6 +94,8 @@ struct Input {
             input._dataSource = pval[1];
           else if ( pval[0] == "number-features" )
             input._nFeatures = Utils::convert<decltype(input._nFeatures)>(pval[1], Utils::Nums::PLUSINT_NOZERO);
+          else if ( pval[0] == "max-label" )
+            input._nLabels = Utils::convert<decltype(input._nLabels)>(pval[1], Utils::Nums::PLUSINT_NOZERO);
         } else {
           throw std::domain_error("bad model file: Input Class");
         }
@@ -151,7 +155,7 @@ int main(int argc, char** argv) {
       if ( input._nFeatures < std::get<MXFT>(data) )
         throw std::domain_error("Data to be classified has more features than were used to do training!");
 
-      rf->predict(std::get<CLF>(data));
+      auto results = rf->predict(std::get<CLF>(data), input._nLabels);
 
       delete std::get<CLF>(data);
       delete rf;
