@@ -330,14 +330,14 @@ struct DecisionTreeClassifier {
     if ( _nodes.empty() )
       throw std::domain_error("Need to learn a model before you can use one!");
 
-    auto currCore = std::get<PARENT>(_nodes.back());
-    for ( auto iter = _nodes.rbegin(); iter != _nodes.rend(); ) {
+    auto currCore = std::get<PARENT>(_nodes.front());
+    for ( auto iter = _nodes.begin(); iter != _nodes.end(); ) {
       auto& parent = *iter++;
 
       if ( std::get<PARENT>(parent) != currCore )
         continue;
-std::cout << std::get<0>(*currCore) << " " << std::get<1>(*currCore) << " " << std::get<2>(*currCore) << " " << std::get<3>(*currCore) << " " << row.size() << std::endl;
-std::flush(std::cout);
+//std::cout << std::get<0>(*currCore) << " " << std::get<1>(*currCore) << " " << std::get<2>(*currCore) << " " << std::get<3>(*currCore) << " " << row.size() << std::endl;
+//std::flush(std::cout);
       dtype absdiff = std::abs(std::get<THOLD>(*currCore) - row[std::get<FID>(*currCore)]);
       bool equal = (absdiff <= std::numeric_limits<dtype>::epsilon());
       if ( equal || std::get<THOLD>(*currCore) > row[std::get<FID>(*currCore)]  ) { // look left
