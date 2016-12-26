@@ -78,7 +78,11 @@ struct RandomForest {
 
     std::vector<Tree::label> final(data->size1(), (Tree::label)0);
     for ( std::size_t i = 0; i < results.size(); ++i )
+{
+std::copy(results[i].begin(), results[i].end(), std::ostream_iterator<Tree::label>(std::cout, " "));
+std::cout << std::endl;
       final[i] = static_cast<Tree::label>(std::max_element(results[i].begin(), results[i].end()) - results[i].begin());
+}
     return final;
   }
 

@@ -23,11 +23,13 @@
 //    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 //
 
+#include <algorithm>
 #include <cstdlib>
 #include <ctime>
 #include <exception>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <list>
 #include <sstream>
 #include <string>
@@ -117,15 +119,17 @@ int main(int argc, char** argv) {
     if ( input._mode == Input::Mode::LEARN ) {
 // sjn probably need to make a _unif and _rng per thread (adding one to the core seed value) and pull it out of dtp so that it can be const (and randomforest class)
 
-      // return triplet: Training Data, Optional Testing Data, and Max Feature ID
-      constexpr std::size_t TRN = 0;
-      constexpr std::size_t TST = 1;
+      // return 4-tuple of Training Data, Optional Testing Data, Max Feature ID, and Max Label
+      constexpr std::size_t TRN  = 0;
+      constexpr std::size_t TST  = 1;
       constexpr std::size_t MXFT = 2;
+      constexpr std::size_t MXLB = 3;
       auto data = Tree::read_data(input._dataSource, input._oobTests, input._oobPercent);
 
       Tree::DecisionTreeParameters& dtp = *input._dtp;
 
-      input._nFeatures = std::get<MXFT>(data);
+      input._nFeatures = static_cast<std::size_t>(std::get<MXFT>(data));
+      input._nLabels = static_cast<std::size_t>(std::get<MXLB>(data));
       Forest::RandomForest rf(dtp, std::get<TRN>(data), std::get<TST>(data));
       rf.build_trees(input._nTrees);
 
@@ -156,6 +160,7 @@ int main(int argc, char** argv) {
         throw std::domain_error("Data to be classified has more features than were used to do training!");
 
       auto results = rf->predict(std::get<CLF>(data), input._nLabels);
+      std::copy(results.begin(), results.end(), std::ostream_iterator<Tree::label>(std::cout, "\n"));
 
       delete std::get<CLF>(data);
       delete rf;
@@ -232,7 +237,7 @@ Input::Input(int argc, char** argv) : _mode(Mode::LEARN),
   int mxLeaves = 0; // no limit at 0
   int minLeafSamples = 1; // no limit at 1
   dtype minPurity = 0.7; // no limit at 0
-  bool useZeroes = false;
+  bool useZeroes = true;
   ClassWeightType classWeight = ClassWeightType::SAME;
   uint64_t seed = 0; // highly randomized if not set
 

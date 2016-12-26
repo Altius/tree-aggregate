@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <cstddef>
 #include <chrono>
 #include <cmath>
@@ -297,7 +298,9 @@ allZeroes(const SparseMatrix& m, std::size_t featureCol, Monitor mask) {
 */
 inline std::tuple<std::size_t, dtype>
 purity(const std::array<dtype, 2>& a) {
-  return std::make_pair(a[0]>a[1] ? 0 : 1, std::max(a[0], a[1])/(a[0]+a[1]));
+  if ( 0 == a[0] && 0 == a[1] )
+    return std::make_tuple(-1,-1);
+  return std::make_tuple(a[0]>a[1] ? 0 : 1, std::max(a[0], a[1])/(a[0]+a[1]));
 }
 
 inline label
@@ -333,8 +336,11 @@ struct DecisionTreeClassifier {
 
       if ( std::get<PARENT>(parent) != currCore )
         continue;
-
-      if ( std::get<THOLD>(*currCore) > row[std::get<FID>(*currCore)]  ) { // look left
+std::cout << std::get<0>(*currCore) << " " << std::get<1>(*currCore) << " " << std::get<2>(*currCore) << " " << std::get<3>(*currCore) << " " << row.size() << std::endl;
+std::flush(std::cout);
+      dtype absdiff = std::abs(std::get<THOLD>(*currCore) - row[std::get<FID>(*currCore)]);
+      bool equal = (absdiff <= std::numeric_limits<dtype>::epsilon());
+      if ( equal || std::get<THOLD>(*currCore) > row[std::get<FID>(*currCore)]  ) { // look left
         if ( !std::get<ISLEAF>(*currCore) )
           currCore = std::get<LEFTCHILD>(parent);
         else
@@ -413,8 +419,9 @@ protected:
     static constexpr std::size_t RC_CPTR = 2, RC_MON = RC_CPTR;
     static constexpr std::size_t LEVEL = 3;
 
+    internal root_internal = std::make_tuple(std::get<PARENT_CPTR>(current), leftChildMonitor, rightChildMonitor, 0);
     std::queue<internal> que;
-    que.push(std::make_tuple(std::get<PARENT_CPTR>(current), leftChildMonitor, rightChildMonitor, 0));
+    que.push(root_internal);
 
     // breadth first traversal
     std::size_t nleaves = 0;
@@ -432,13 +439,16 @@ protected:
         leftChildMonitor = ~rightChildMonitor & parentMonitor;
         auto nextl = std::make_tuple(std::get<LC_CPTR>(current), leftChildMonitor, rightChildMonitor, level+1);
 
-        if ( !done(std::get<PUR>(std::get<LPU>(p)), level, nleaves) )
-          que.push(nextl);
-        else {
+        if ( done(std::get<PUR>(std::get<LPU>(p)), std::get<PUR>(std::get<RPU>(p)), level, nleaves) ) {
+          std::get<FID>(*std::get<LC_CPTR>(current)) = 0;
+          std::get<SPV>(*std::get<LC_CPTR>(current)) = 0;
+          std::get<LC_MON>(nextl).reset();
+          std::get<RC_MON>(nextl).reset();
           std::get<ISLEAF>(*std::get<LC_CPTR>(current)) = true;
           std::get<DECISION>(*std::get<LC_CPTR>(current)) = std::get<DEC>(std::get<LPU>(p));
           ++nleaves;
         }
+        que.push(nextl);
       }
 
       if ( std::get<RC_MON>(e).any() ) {
@@ -450,15 +460,17 @@ protected:
         leftChildMonitor = ~rightChildMonitor & parentMonitor;
         auto nextr = std::make_tuple(std::get<RC_CPTR>(current), leftChildMonitor, rightChildMonitor, level+1);
 
-        if ( !done(std::get<PUR>(std::get<RPU>(q)), level, nleaves) )
-          que.push(nextr);
-        else {
+        if ( done(std::get<PUR>(std::get<LPU>(q)), std::get<PUR>(std::get<RPU>(q)), level, nleaves) ) {
+          std::get<FID>(*std::get<RC_CPTR>(current)) = 0;
+          std::get<SPV>(*std::get<RC_CPTR>(current)) = 0;
+          std::get<LC_MON>(nextr).reset();
+          std::get<RC_MON>(nextr).reset();
           std::get<ISLEAF>(*std::get<RC_CPTR>(current)) = true;
-          std::get<DECISION>(*std::get<RC_CPTR>(current)) = std::get<DEC>(std::get<RPU>(p));
+          std::get<DECISION>(*std::get<RC_CPTR>(current)) = std::get<DEC>(std::get<RPU>(q));
           ++nleaves;
         }
+        que.push(nextr);
       }
-
       _nodes.push_back(current);
       que.pop();
     } // while
@@ -466,8 +478,8 @@ protected:
 
   // may add in _minLeafSamples eventually
   inline bool
-  done(dtype currPurity, std::size_t level, std::size_t maxLeaves) {
-    return (currPurity >= _dtp._minPuritySplit) ||
+  done(dtype lchildPurity, dtype rchildPurity, std::size_t level, std::size_t maxLeaves) {
+    return ((lchildPurity >= _dtp._minPuritySplit) && (rchildPurity >= _dtp._minPuritySplit)) ||
            (_dtp._maxDepth && level > _dtp._maxDepth)   ||
            (_dtp._maxLeafNodes && maxLeaves > _dtp._maxLeafNodes);
   }
@@ -632,13 +644,13 @@ protected:
     }
     return std::make_pair(*mn, *mx);
   }
-
+/*
   template <typename C>
   dtype
   gini(const C& left, const C& right) {
     dtype class_total = 0, prop_left = 0, prop_right = 0;
-    dtype nleft = std::accumulate(left.begin(), left.end(), 0);
-    dtype nright = std::accumulate(right.begin(), right.end(), 0);
+    const dtype nleft = std::accumulate(left.begin(), left.end(), 0);
+    const dtype nright = std::accumulate(right.begin(), right.end(), 0);
     dtype sum_left = 0, sum_right = 0;
     for ( std::size_t cls = 0; cls < left.size(); ++cls ) {
       class_total = left[cls] + right[cls];
@@ -649,7 +661,26 @@ protected:
       sum_left += (prop_left*(1-prop_left));
       sum_right += (prop_right*(1-prop_right));
     } // for
-    return nleft*sum_left + nright*sum_right;
+    return nleft/(nleft+nright)*sum_left + nright/(nleft+nright)*sum_right;
+  }
+*/
+  template <typename C>
+  inline dtype
+  gini(const C& c, std::size_t totalSz) {
+    if ( 0 == totalSz ) { return 0; }
+    dtype sqsum = 0;
+    for ( std::size_t cls = 0; cls < c.size(); ++cls )
+      sqsum += std::pow(c[cls]/totalSz, 2.0);
+    return 1-sqsum;
+  }
+
+  template <typename C>
+  inline dtype
+  gini(const C& left, const C& right) {
+    const dtype nleft = std::accumulate(left.begin(), left.end(), 0);
+    const dtype nright = std::accumulate(right.begin(), right.end(), 0);
+//    const dtype n = nleft + nright;
+    return (nleft/(nleft+nright))*gini(left, nleft) + (nright/(nright+nleft))*gini(right, nright);
   }
 
 //sjn need to keep track of whether we include zeroes in the output model of a tree for each applicable feature
@@ -674,29 +705,31 @@ protected:
       if ( includeZeroes )
         uniq_scores.insert(0);
 
-      dtype best_score = 1e8;
+      dtype best_score = std::numeric_limits<dtype>::max();
       for ( auto u : uniq_scores ) {
+        auto v = u + std::numeric_limits<dtype>::epsilon();
         std::array<dtype, 2> nl = { 0, 0 }; // how many instances of each class in left branch
         auto nr = nl; //  how many instances of each class in right branch
         if ( includeZeroes ) {
           for ( std::size_t i = 0; i < values.size(); ++i ) {
-            if ( values[i] > u )
-              nr[labels(i)]++;
+            if ( values[i] > v ) // v not u
+              nr[labels[i]]++;
             else
-              nl[labels(i)]++;
+              nl[labels[i]]++;
           } // for
         } else { // only look at labels of rows with nonZero values for this featColumn
           for ( auto viter = values.begin(); viter != values.end(); ++viter ) { // these are const_iterators due to values
-            if ( *viter > u )
-              nr[labels(viter.index())]++;
+            if ( *viter > v ) // v, not u
+              nr[labels[viter.index()]]++;
             else
-              nl[labels(viter.index())]++;
+              nl[labels[viter.index()]]++;
           } // for
         }
         dtype gval = gini(nl, nr);
         if ( gval < best_score ) {
-          std::get<QS>(rtn) = 1-gval;
-          std::get<TH>(rtn) = u;
+//          std::get<QS>(rtn) = 1-gval;
+          std::get<QS>(rtn) = gval;
+          std::get<TH>(rtn) = u; // u, not v
           std::get<LP>(rtn) = purity(nl);
           std::get<RP>(rtn) = purity(nr);
           best_score = gval;
@@ -725,7 +758,8 @@ protected:
             nl[labels(viter.index())]++;
         } // for
       }
-      std::get<QS>(rtn) = 1-gini(nl, nr);
+//      std::get<QS>(rtn) = 1-gini(nl, nr);
+      std::get<QS>(rtn) = gini(nl, nr);
       std::get<LP>(rtn) = purity(nl);
       std::get<RP>(rtn) = purity(nr);
     }

@@ -41,43 +41,43 @@ namespace Tree {
 
 inline featureID
 get_features(const std::string& s, char d1, char d2, std::unordered_map<featureID, dtype>& mp) {
-  static const std::size_t LabelID = 0;
+  static constexpr std::size_t LabelID = 0;
+  static constexpr dtype zero = dtype(0);
   std::string::size_type pos1 = 0, pos2 = 0, posA = 0;
   std::string next;
-  int maxFeatureLabel = 0;
-  bool label = false;
+  int maxFeatureID = 0;
+  bool labeled = false;
   do {
     pos2 = s.find(d1, pos1);
     next = s.substr(pos1, pos2-pos1);
     posA = next.find(d2);
     if ( posA == std::string::npos ) {
-      if ( label )
+      if ( labeled )
         throw std::domain_error("Feature does not have a value? " + next);
-      label = true;
+      labeled = true;
       mp.insert(std::make_pair(LabelID, Utils::convert<featureID>(next, Utils::Nums::PLUSINT)));
       pos1 = pos2+1;
       continue;
     }
 
-    featureID b = static_cast<featureID>(std::atoi(next.substr(0, posA).c_str()));
-    dtype c = static_cast<dtype>(std::atof(next.substr(posA+1).c_str()));
-    if ( b > maxFeatureLabel )
-      maxFeatureLabel = b;
+    featureID b = Utils::convert<featureID>(next.substr(0, posA), Utils::Nums::PLUSINT_NOZERO);
+    dtype c = Utils::convert<dtype>(next.substr(posA+1).c_str(), Utils::Nums::REAL);
+    if ( b > maxFeatureID )
+      maxFeatureID = b;
     else if ( b < 0 )
       throw std::domain_error("Feature labels must be +int " + next);
 
-    static const dtype zero = dtype(0);
     if ( c != zero )
       mp.insert(std::make_pair(b, static_cast<dtype>(c)));
     pos1 = pos2 + 1;
   } while ( pos2 != std::string::npos ); // do-while
-  if ( 0 == maxFeatureLabel )
+  if ( 0 == maxFeatureID )
     throw std::domain_error("No features found in at least 1 row");
-  return maxFeatureLabel + label;
+  return maxFeatureID + labeled;
 }
 
 // for learning
-std::tuple<DataMatrix*, DataMatrixInv*, featureID>
+std::tuple<DataMatrix*, DataMatrixInv*, featureID, label>
 read_data(const std::string& source, bool oob, double oobPercent, bool addone=false) {
   std::ifstream infile(source.c_str());
   if ( !infile )
@@ -86,16 +86,19 @@ read_data(const std::string& source, bool oob, double oobPercent, bool addone=fa
   // kind of crazy, but going to read input twice since I don't want to 'resize'
   //  a DataMatrix each time I add a row.
   Utils::ByLine bl;
-  std::size_t nRows=0, nCols=0, nNonZeroes = 0, maxFeature = 0;
+  std::size_t nRows=0, nCols=0, nNonZeroes = 0, mxFeature = 0;
+  label mxLabel = (label)0;
   std::unordered_map<featureID, dtype> featureList;
   while ( infile >> bl ) {
     if ( bl.empty() )
       throw std::domain_error("empty line found in input file");
     ++nRows;
-    maxFeature = get_features(bl, ' ', ':', featureList);
-    if ( maxFeature > nCols )
-      nCols = maxFeature;
+    mxFeature = get_features(bl, ' ', ':', featureList);
+    if ( mxFeature > nCols )
+      nCols = mxFeature;
     nNonZeroes += (featureList.size()-1); // -1 for label
+    if ( featureList[0] > mxLabel )
+      mxLabel = featureList[0];
     featureList.clear();
   } // while
 
@@ -112,13 +115,13 @@ read_data(const std::string& source, bool oob, double oobPercent, bool addone=fa
     if ( !modRows )
       throw std::domain_error("something unexpected is wrong.  See 'read_data()s modRows'");
 
-    // have to read through again to derive proper nNonZeroes and nNonZeroesOOB, and possibly update nCols
+    // have to read through again to derive proper nNonZeroes and nNonZeroesOOB, and possibly update nCols/mxLabel
     infile.close();
     infile.open(source.c_str());
     std::size_t nNonZeroesOOB = 0;
     nRows = 0, nNonZeroes = 0, oobRowCount = 0;
     while ( infile >> bl ) {
-      maxFeature = get_features(bl, ' ', ':', featureList);
+      mxFeature = get_features(bl, ' ', ':', featureList);
       if ( !((nRows+1) % modRows) || oobRowCount >= oobRows ) {
         nNonZeroes += (featureList.size()-1);
         ++nRows;
@@ -126,8 +129,10 @@ read_data(const std::string& source, bool oob, double oobPercent, bool addone=fa
         nNonZeroesOOB += (featureList.size()-1);
         ++oobRowCount;
       }
-      if ( maxFeature > nCols )
-        nCols = maxFeature;
+      if ( mxFeature > nCols )
+        nCols = mxFeature;
+      if ( featureList[0] > mxLabel )
+        mxLabel = featureList[0];
       featureList.clear();
     } // while
     // keep nCols the same between dmOOB and the learning matrix; nCols = finalNCols below
@@ -155,7 +160,8 @@ read_data(const std::string& source, bool oob, double oobPercent, bool addone=fa
     }
     featureList.clear();
   } // while
-  return std::make_tuple(dm, dmOOB, finalNCols);
+  mxLabel++; // assume 0 is a valid label
+  return std::make_tuple(dm, dmOOB, finalNCols, mxLabel);
 }
 
 // for predictions
@@ -163,7 +169,15 @@ std::tuple<DataMatrixInv*, featureID>
 read_data(const std::string& source) {
   const bool addonecol = true; // no label and features are 1-based
   auto data = read_data(source, false, 0, addonecol);
-  DataMatrixInv* dmi = new DataMatrixInv(trans(*std::get<0>(data)));
+//  DataMatrixInv* dmi = new DataMatrixInv(trans(*std::get<0>(data)));
+//DataMatrixInv* dmi = new DataMatrixInv(*std::get<0>(data));
+DataMatrixInv* dmi = new DataMatrixInv(std::get<0>(data)->size1(), std::get<0>(data)->size2());
+for ( std::size_t i = 0; i < std::get<0>(data)->size1(); ++i ) {
+for ( std::size_t j = 0; j < std::get<0>(data)->size2(); ++j )
+  (*dmi)(i,j) = (*std::get<0>(data))(i,j);
+}
+//std::cout << dmi->size1() << " " << dmi->size2() << " " << std::get<0>(data)->size1() << " " << std::get<0>(data)->size2() << std::endl;
+//std::flush(std::cout);
   delete std::get<0>(data);
   return std::make_tuple(dmi, std::get<2>(data));
 }
