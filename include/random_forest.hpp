@@ -69,11 +69,9 @@ struct RandomForest {
   predict(Tree::DataMatrixInv const* data, std::size_t mxlabel) const {
 // sjn multithread this
     std::vector<std::vector<Tree::label>> results(data->size1(), std::vector<Tree::label>(mxlabel, (Tree::label)0));
-//std::size_t cntr = 0;
     for ( auto& tree : _forest ) {
       std::vector<Tree::label> predictions(data->size1(), 0);
       tree->classify(*data, predictions);
-//std::cout << "iter: " << ++cntr << std::endl;
       for ( std::size_t i = 0; i < predictions.size(); ++i )
         results[i][predictions[i]]++;
     } // for
@@ -111,6 +109,7 @@ struct RandomForest {
   std::list<Tree::DecisionTreeClassifier*> _forest;
 };
 
+inline
 std::ostream&
 operator<<(std::ostream& os, const RandomForest& rf) {
   bool any = false;
@@ -123,6 +122,7 @@ operator<<(std::ostream& os, const RandomForest& rf) {
   return os;
 }
 
+inline
 std::istream&
 operator>>(std::istream& is, RandomForest& rf) {
   Tree::DecisionTreeClassifier tmp(rf._dtp);

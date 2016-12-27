@@ -150,7 +150,7 @@ struct DecisionTreeParameters {
       _argmap[Utils::uppercase("SelectSplitNumeric")] = Utils::Nums::PLUSREAL; // if SplitMaxFeatures=INT||FLT, this is the value
     }
 
-  friend
+  friend inline
   std::ostream&
   operator<<(std::ostream& output, const DecisionTreeParameters& dtp) {
     constexpr char space = ' ';
@@ -169,7 +169,7 @@ struct DecisionTreeParameters {
     return output;
   }
 
-  friend
+  friend inline
   std::istream&
   operator>>(std::istream& is, DecisionTreeParameters& dtp) {
     const std::string space(" ");
@@ -299,13 +299,35 @@ allZeroes(const SparseMatrix& m, std::size_t featureCol, Monitor mask) {
 inline std::tuple<std::size_t, dtype>
 purity(const std::array<dtype, 2>& a) {
   if ( 0 == a[0] && 0 == a[1] )
-    return std::make_tuple(-1,-1);
+    return std::make_tuple(0,1);
   return std::make_tuple(a[0]>a[1] ? 0 : 1, std::max(a[0], a[1])/(a[0]+a[1]));
 }
 
 inline label
-majority_decision(const std::array<dtype, 2>& a) {
-  return a[0] > a[1] ? 0 : 1;
+vote_majority(const DataMatrix& dm, const Monitor& m) {
+  std::vector<std::vector<label>> call;
+  auto first = m.find_first();
+  auto& labels = column(dm, 0);
+  while ( m != Monitor::npos ) {
+    label value = labels[m];
+    if ( call.size() <= value )
+      call.resize(value, 0);
+    call[value] += 1;
+  } // while
+  return static_cast<label>(std::max_element(call.begin(), call.end()) - call.begin());
+}
+
+inline std::tuple<bool, std::size_t>
+pure_enough(const DataMatrix& dm, Core const* parent, const Monitor& child) {
+  auto& labels = column(dm, 0);
+  auto pos = child.find_first();
+  std::array<dtype, 2> counts = { 0, 0 }; // how many of each label?
+
+  while ( pos != Monitor::npos ) {
+    counts[labels[pos]]++;
+    pos = child.find_next(pos);
+  } // while
+  return std::make_tuple(purity(counts) >= _dtp._minPuritySplit, counts[0]>counts[1] ? 0 : 1);
 }
 
 /*
@@ -336,8 +358,7 @@ struct DecisionTreeClassifier {
 
       if ( std::get<PARENT>(parent) != currCore )
         continue;
-//std::cout << std::get<0>(*currCore) << " " << std::get<1>(*currCore) << " " << std::get<2>(*currCore) << " " << std::get<3>(*currCore) << " " << row.size() << std::endl;
-//std::flush(std::cout);
+
       dtype absdiff = std::abs(std::get<THOLD>(*currCore) - row[std::get<FID>(*currCore)]);
       bool equal = (absdiff <= std::numeric_limits<dtype>::epsilon());
       if ( equal || std::get<THOLD>(*currCore) > row[std::get<FID>(*currCore)]  ) { // look left
@@ -386,7 +407,6 @@ protected:
   split(const DataMatrix& dm, std::size_t nSplitFeatures) {
     /* main algorithm for learning splits, implemented as BFS */
     const std::size_t numSamples = dm.size1();
-    const std::size_t numFeatures = dm.size2();
     Monitor parentMonitor(numSamples);
     parentMonitor.set();
 
@@ -404,10 +424,13 @@ protected:
 
 // sjn might make better sense to make the 3 monitors pointers everywhere; test performance later
     const bool noLeaf = false;
+    const bool isLeaf = true;
     const std::size_t noDecision = std::numeric_limits<std::size_t>::max();
     auto p = find_split(dm, nSplitFeatures, parentMonitor);
     Node current(new Core(std::get<FID>(p), std::get<SPV>(p), noLeaf, noDecision), nullptr, nullptr); // root
     decltype(p) q;
+
+std::cout << "root: " << std::get<0>(p) << " " << std::get<1>(p) << " " << std::get<2>(p) << " " << std::get<0>(std::get<3>(p)) << " " << std::get<1>(std::get<3>(p)) << " " << std::get<0>(std::get<4>(p)) << " " << std::get<1>(std::get<4>(p)) << std::endl;
 
     // partition parent into left/right
     Monitor rightChildMonitor = std::get<MON>(p);
@@ -419,6 +442,19 @@ protected:
     static constexpr std::size_t RC_CPTR = 2, RC_MON = RC_CPTR;
     static constexpr std::size_t LEVEL = 3;
 
+    if ( done(std::get<PUR>(std::get<LPU>(p)), std::get<PUR>(std::get<RPU>(p))) ) {
+      std::get<LC_CPTR>(current) = new Core(std::get<FID>(p), std::get<SPV>(p), isLeaf, noDecision);
+      std::get<FID>(*std::get<LC_CPTR>(current)) = 0;
+      std::get<SPV>(*std::get<LC_CPTR>(current)) = 0;
+      std::get<DECISION>(*std::get<LC_CPTR>(current)) = std::get<DEC>(std::get<LPU>(p));
+      std::get<RC_CPTR>(current) = new Core(std::get<FID>(p), std::get<SPV>(p), isLeaf, noDecision);
+      std::get<FID>(*std::get<RC_CPTR>(current)) = 0;
+      std::get<SPV>(*std::get<RC_CPTR>(current)) = 0;
+      std::get<DECISION>(*std::get<RC_CPTR>(current)) = std::get<DEC>(std::get<RPU>(p));
+      _nodes.push_back(current);
+      return;
+    }
+
     internal root_internal = std::make_tuple(std::get<PARENT_CPTR>(current), leftChildMonitor, rightChildMonitor, 0);
     std::queue<internal> que;
     que.push(root_internal);
@@ -428,18 +464,21 @@ protected:
     while ( !que.empty() ) {
       auto& e = que.front();
       const std::size_t level = std::get<LEVEL>(e);
-
       current = Node(std::get<PARENT_CPTR>(e), nullptr, nullptr);
       if ( std::get<LC_MON>(e).any() ) {
+//        if ( pure_enough(dm, std::get<LC_MON>(e)) ) {
+//          std::get<LC_CPTR>(current) = new Core(0, 0, isLeaf, vote_majority(dm, std::get<LC_MON>(e)));
         p = find_split(dm, nSplitFeatures, std::get<LC_MON>(e));
-        std::get<LC_CPTR>(current) = new Core(std::get<FID>(p), std::get<SPV>(p), noLeaf, noDecision);
+std::cout << "p: " << level << " " << std::get<0>(p) << " " << std::get<1>(p) << " " << std::get<2>(p) << " [" << std::get<LC_MON>(e) << "] " << std::get<0>(std::get<3>(p)) << " " << std::get<1>(std::get<3>(p)) << " " << std::get<0>(std::get<4>(p)) << " " << std::get<1>(std::get<4>(p)) << std::endl;
+          std::get<LC_CPTR>(current) = new Core(std::get<FID>(p), std::get<SPV>(p), noLeaf, noDecision);
 
         parentMonitor = std::get<LC_MON>(e);
         rightChildMonitor = std::get<MON>(p);
         leftChildMonitor = ~rightChildMonitor & parentMonitor;
         auto nextl = std::make_tuple(std::get<LC_CPTR>(current), leftChildMonitor, rightChildMonitor, level+1);
 
-        if ( done(std::get<PUR>(std::get<LPU>(p)), std::get<PUR>(std::get<RPU>(p)), level, nleaves) ) {
+        if ( done(std::get<PUR>(std::get<LPU>(p)), std::get<PUR>(std::get<RPU>(p)), level, nleaves, rightChildMonitor, parentMonitor) ) {
+std::cout << "done" << std::endl;
           std::get<FID>(*std::get<LC_CPTR>(current)) = 0;
           std::get<SPV>(*std::get<LC_CPTR>(current)) = 0;
           std::get<LC_MON>(nextl).reset();
@@ -453,6 +492,7 @@ protected:
 
       if ( std::get<RC_MON>(e).any() ) {
         q = find_split(dm, nSplitFeatures, std::get<RC_MON>(e));
+std::cout << "q: " << level << " " << std::get<0>(q) << " " << std::get<1>(q) << " " << std::get<2>(q) << " [" << std::get<RC_MON>(e) << "] " << std::get<0>(std::get<3>(q)) << " " << std::get<1>(std::get<3>(q)) << " " << std::get<0>(std::get<4>(q)) << " " << std::get<1>(std::get<4>(q)) << std::endl;
         std::get<RC_CPTR>(current) = new Core(std::get<FID>(q), std::get<SPV>(q), noLeaf, noDecision);
 
         parentMonitor = std::get<RC_MON>(e);
@@ -460,7 +500,8 @@ protected:
         leftChildMonitor = ~rightChildMonitor & parentMonitor;
         auto nextr = std::make_tuple(std::get<RC_CPTR>(current), leftChildMonitor, rightChildMonitor, level+1);
 
-        if ( done(std::get<PUR>(std::get<LPU>(q)), std::get<PUR>(std::get<RPU>(q)), level, nleaves) ) {
+        if ( done(std::get<PUR>(std::get<LPU>(q)), std::get<PUR>(std::get<RPU>(q)), level, nleaves, rightChildMonitor, parentMonitor) ) {
+std::cout << "done" << std::endl;
           std::get<FID>(*std::get<RC_CPTR>(current)) = 0;
           std::get<SPV>(*std::get<RC_CPTR>(current)) = 0;
           std::get<LC_MON>(nextr).reset();
@@ -478,10 +519,16 @@ protected:
 
   // may add in _minLeafSamples eventually
   inline bool
-  done(dtype lchildPurity, dtype rchildPurity, std::size_t level, std::size_t maxLeaves) {
+  done(dtype lchildPurity, dtype rchildPurity, std::size_t level, std::size_t nLeaves, const Monitor& updated, const Monitor& previous) {
     return ((lchildPurity >= _dtp._minPuritySplit) && (rchildPurity >= _dtp._minPuritySplit)) ||
            (_dtp._maxDepth && level > _dtp._maxDepth)   ||
-           (_dtp._maxLeafNodes && maxLeaves > _dtp._maxLeafNodes);
+           (_dtp._maxLeafNodes && nLeaves >= _dtp._maxLeafNodes) ||
+           (_dtp._splitStrategy == SplitStrategy::BEST && updated == previous); // BEST found no way to split further
+  }
+
+  inline bool
+  done(dtype lchildPurity, dtype rchildPurity) {
+    return (lchildPurity >= _dtp._minPuritySplit) && (rchildPurity >= _dtp._minPuritySplit);
   }
 
 public:
@@ -505,8 +552,6 @@ public:
   void
   learn(const DataMatrix& dm) {
     const std::size_t numFeatures = dm.size2();
-    const std::size_t numSamples = dm.size1();
-
     std::size_t nSplitFeatures = 0;
     switch(_dtp._splitMaxSelect) {
       case SplitMaxFeat::INT:
@@ -532,7 +577,7 @@ public:
     split(dm, nSplitFeatures);
   }
 
-  friend // read in a model previously created
+  friend inline // read in a model previously created
   std::istream&
   operator>>(std::istream& input, DecisionTreeClassifier& dtc) {
     if (!input)
@@ -579,11 +624,10 @@ public:
     } // while
 
     input >> closed_bracket;
-
     return input;
   }
 
-  friend // write out this model
+  friend inline // write out this model
   std::ostream&
   operator<<(std::ostream& output, const DecisionTreeClassifier& dtc) {
     static constexpr std::size_t PAR = dtc.PARENT;
@@ -688,21 +732,28 @@ protected:
   //===================================
   // return [0] as quality of split
   // return [1] is threshold chosen
-  // return [2] is purity in left branch
-  // return [3] is purity in right branch
+  // return [2] is decision&purity in left branch
+  // return [3] is decision&purity in right branch
   //  for now, assume 2 classes/labels of 0 and 1 as we index arrays of size 2.
   //  use const iterators or for-range if not considering implicit (0) feature values
   //    use const: 5.2 at
   //    http://www.boost.org/doc/libs/1_51_0/libs/numeric/ublas/doc/operations_overview.htm#4SubmatricesSubvectors
   std::tuple<dtype, dtype, std::tuple<label, dtype>, std::tuple<label, dtype>>
-  split_gini(const DataMatrix& dm, std::size_t featColumn, SplitStrategy s, bool includeZeroes) {
+  split_gini(const DataMatrix& dm, std::size_t featColumn, SplitStrategy s, bool includeZeroes, const Monitor& monitor) {
     const auto& labels = ub::column(dm, 0);
     const auto& values = ub::column(dm, featColumn);
     auto iter = values.begin(), iter_end = values.end();
     std::tuple<dtype, dtype, std::tuple<label, dtype>, std::tuple<label, dtype>> rtn(0,0,std::make_tuple(0,0), std::make_tuple(0,0));
-    if ( s == SplitStrategy::BEST ) { // find best value to split on; smallest gini is best
-      std::set<dtype> uniq_scores(iter, iter_end);
-      if ( includeZeroes )
+    Monitor mask(monitor);
+    if ( s == SplitStrategy::BEST) { // find best value to split on; smallest gini is best
+      std::set<dtype> uniq_scores;
+      while ( iter != iter_end ) { // const iterators
+        if ( monitor[iter.index()] )
+          uniq_scores.insert(*iter);
+        mask[iter.index()] = false;
+        ++iter;
+      } // while
+      if ( includeZeroes && mask.any() )
         uniq_scores.insert(0);
 
       dtype best_score = std::numeric_limits<dtype>::max();
@@ -712,17 +763,21 @@ protected:
         auto nr = nl; //  how many instances of each class in right branch
         if ( includeZeroes ) {
           for ( std::size_t i = 0; i < values.size(); ++i ) {
-            if ( values[i] > v ) // v not u
-              nr[labels[i]]++;
-            else
-              nl[labels[i]]++;
+            if ( monitor[i] ) {
+              if ( values[i] > v ) // v not u
+                nr[labels[i]]++;
+              else
+                nl[labels[i]]++;
+            }
           } // for
         } else { // only look at labels of rows with nonZero values for this featColumn
           for ( auto viter = values.begin(); viter != values.end(); ++viter ) { // these are const_iterators due to values
-            if ( *viter > v ) // v, not u
-              nr[labels[viter.index()]]++;
-            else
-              nl[labels[viter.index()]]++;
+            if ( monitor[viter.index()] ) {
+              if ( *viter > v ) // v, not u
+                nr[labels[viter.index()]]++;
+              else
+                nl[labels[viter.index()]]++;
+            }
           } // for
         }
         dtype gval = gini(nl, nr);
@@ -769,13 +824,13 @@ protected:
   inline
   /* quality, split-value, decision-left/purity-left, decision-right/purity-right */
   std::tuple<dtype, dtype, std::tuple<label, dtype>, std::tuple<label, dtype>>
-  evaluate(const DataMatrix& dm, std::size_t featColumn) {
+  evaluate(const DataMatrix& dm, std::size_t featColumn, const Monitor& monitor) {
     switch(_dtp._criterion) {
       case Criterion::GINI:
-        return split_gini(dm, featColumn, _dtp._splitStrategy, _dtp._useImpliedZerosInSplitDecision);
+        return split_gini(dm, featColumn, _dtp._splitStrategy, _dtp._useImpliedZerosInSplitDecision, monitor);
       case Criterion::ENTROPY:
 return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
-//        return split_entropy(dm, featColumn, _dtp._splitStrategy, _dtp._useImpliedZerosInSplitDecision);
+//        return split_entropy(dm, featColumn, _dtp._splitStrategy, _dtp._useImpliedZerosInSplitDecision, monitor);
       default:
           throw std::domain_error("Unknown criterion in evaluate()");
     }
@@ -804,7 +859,7 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
           break;
       } // while
 
-      auto val = evaluate(dm, col); // return split quality, split value, ldec/lpurity, rdec/rpurity
+      auto val = evaluate(dm, col, mask); // return split quality, split value, ldec/lpurity, rdec/rpurity
       if ( std::get<QS>(val) > currBest ) {
         currBest = std::get<QS>(val);
         currValue = std::get<TH>(val);
