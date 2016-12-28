@@ -23,6 +23,10 @@
 //    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 //
 
+/*
+  I've spent time worrying about epsilon() in certain situations, but not all yet.
+*/
+
 #ifndef __ALTIUS_DTREE_HPP__
 #define __ALTIUS_DTREE_HPP__
 
@@ -244,7 +248,8 @@ private:
   template <typename T>
   void set_value(T& t, const std::string& s, const std::string& v) { t = check_value<T>(s,v); }
 
-private:
+// sjn private:
+public:
   friend struct DecisionTreeClassifier;
 
   // by construction (would be const if not for operator>> and my laziness to do it differently)
@@ -305,20 +310,20 @@ purity(const std::array<dtype, 2>& a) {
 
 inline label
 vote_majority(const DataMatrix& dm, const Monitor& m) {
-  std::vector<std::vector<label>> call;
-  auto first = m.find_first();
+  std::vector<label> call;
+  auto pos = m.find_first();
   auto& labels = column(dm, 0);
-  while ( m != Monitor::npos ) {
-    label value = labels[m];
+  while ( pos != Monitor::npos ) {
+    label value = labels[pos];
     if ( call.size() <= value )
-      call.resize(value, 0);
+      call.resize(static_cast<std::size_t>(value), (label)0);
     call[value] += 1;
   } // while
   return static_cast<label>(std::max_element(call.begin(), call.end()) - call.begin());
 }
 
 inline std::tuple<bool, std::size_t>
-pure_enough(const DataMatrix& dm, Core const* parent, const Monitor& child) {
+pure_enough(const DataMatrix& dm, const Monitor& child, const DecisionTreeParameters& dtp) {
   auto& labels = column(dm, 0);
   auto pos = child.find_first();
   std::array<dtype, 2> counts = { 0, 0 }; // how many of each label?
@@ -327,7 +332,7 @@ pure_enough(const DataMatrix& dm, Core const* parent, const Monitor& child) {
     counts[labels[pos]]++;
     pos = child.find_next(pos);
   } // while
-  return std::make_tuple(purity(counts) >= _dtp._minPuritySplit, counts[0]>counts[1] ? 0 : 1);
+  return std::make_tuple(std::get<1>(purity(counts)) >= dtp._minPuritySplit, counts[0]>counts[1] ? 0 : 1);
 }
 
 /*
@@ -430,8 +435,6 @@ protected:
     Node current(new Core(std::get<FID>(p), std::get<SPV>(p), noLeaf, noDecision), nullptr, nullptr); // root
     decltype(p) q;
 
-std::cout << "root: " << std::get<0>(p) << " " << std::get<1>(p) << " " << std::get<2>(p) << " " << std::get<0>(std::get<3>(p)) << " " << std::get<1>(std::get<3>(p)) << " " << std::get<0>(std::get<4>(p)) << " " << std::get<1>(std::get<4>(p)) << std::endl;
-
     // partition parent into left/right
     Monitor rightChildMonitor = std::get<MON>(p);
     Monitor leftChildMonitor = ~rightChildMonitor & parentMonitor;
@@ -466,51 +469,93 @@ std::cout << "root: " << std::get<0>(p) << " " << std::get<1>(p) << " " << std::
       const std::size_t level = std::get<LEVEL>(e);
       current = Node(std::get<PARENT_CPTR>(e), nullptr, nullptr);
       if ( std::get<LC_MON>(e).any() ) {
-//        if ( pure_enough(dm, std::get<LC_MON>(e)) ) {
-//          std::get<LC_CPTR>(current) = new Core(0, 0, isLeaf, vote_majority(dm, std::get<LC_MON>(e)));
-        p = find_split(dm, nSplitFeatures, std::get<LC_MON>(e));
-std::cout << "p: " << level << " " << std::get<0>(p) << " " << std::get<1>(p) << " " << std::get<2>(p) << " [" << std::get<LC_MON>(e) << "] " << std::get<0>(std::get<3>(p)) << " " << std::get<1>(std::get<3>(p)) << " " << std::get<0>(std::get<4>(p)) << " " << std::get<1>(std::get<4>(p)) << std::endl;
-          std::get<LC_CPTR>(current) = new Core(std::get<FID>(p), std::get<SPV>(p), noLeaf, noDecision);
-
-        parentMonitor = std::get<LC_MON>(e);
-        rightChildMonitor = std::get<MON>(p);
-        leftChildMonitor = ~rightChildMonitor & parentMonitor;
-        auto nextl = std::make_tuple(std::get<LC_CPTR>(current), leftChildMonitor, rightChildMonitor, level+1);
-
-        if ( done(std::get<PUR>(std::get<LPU>(p)), std::get<PUR>(std::get<RPU>(p)), level, nleaves, rightChildMonitor, parentMonitor) ) {
-std::cout << "done" << std::endl;
-          std::get<FID>(*std::get<LC_CPTR>(current)) = 0;
-          std::get<SPV>(*std::get<LC_CPTR>(current)) = 0;
-          std::get<LC_MON>(nextl).reset();
-          std::get<RC_MON>(nextl).reset();
-          std::get<ISLEAF>(*std::get<LC_CPTR>(current)) = true;
-          std::get<DECISION>(*std::get<LC_CPTR>(current)) = std::get<DEC>(std::get<LPU>(p));
+        auto check = pure_enough(dm, std::get<LC_MON>(e), _dtp);
+        if ( std::get<0>(check) ) { // pure enough to be a leaf
+          const std::size_t decision = std::get<1>(check);
+          std::get<LC_CPTR>(current) = new Core(0, 0, isLeaf, decision);
+          Monitor unmonitored;
+          auto nextl = std::make_tuple(std::get<LC_CPTR>(current), unmonitored, unmonitored, level+1);
+          que.push(nextl);
           ++nleaves;
+        } else {
+          p = find_split(dm, nSplitFeatures, std::get<LC_MON>(e));
+          std::get<LC_CPTR>(current) = new Core(std::get<FID>(p), std::get<SPV>(p), noLeaf, noDecision);
+          parentMonitor = std::get<LC_MON>(e);
+          rightChildMonitor = std::get<MON>(p);
+          leftChildMonitor = ~rightChildMonitor & parentMonitor;
+
+          if ( !rightChildMonitor.any() || rightChildMonitor == parentMonitor ) { // did not split
+            p = man_split(dm, parentMonitor); // force a split
+            std::get<FID>(*std::get<LC_CPTR>(current)) = std::get<FID>(p);
+            std::get<SPV>(*std::get<LC_CPTR>(current)) = std::get<SPV>(p);
+            parentMonitor = std::get<LC_MON>(e);
+            rightChildMonitor = std::get<MON>(p);
+            leftChildMonitor = ~rightChildMonitor & parentMonitor;
+            if ( !rightChildMonitor.any() || rightChildMonitor == parentMonitor ) { // cannot be split further
+              std::get<FID>(*std::get<LC_CPTR>(current)) = 0;
+              std::get<SPV>(*std::get<LC_CPTR>(current)) = 0;
+              std::get<ISLEAF>(*std::get<LC_CPTR>(current)) = true;
+              std::get<DECISION>(*std::get<LC_CPTR>(current)) = std::get<DEC>(std::get<LPU>(p));
+              leftChildMonitor.reset();
+              rightChildMonitor.reset();
+            }
+          } else if ( done(std::get<PUR>(std::get<LPU>(p)), std::get<PUR>(std::get<RPU>(p)), level, nleaves) ) {
+            std::get<FID>(*std::get<LC_CPTR>(current)) = 0;
+            std::get<SPV>(*std::get<LC_CPTR>(current)) = 0;
+            leftChildMonitor.reset();
+            rightChildMonitor.reset();
+            std::get<ISLEAF>(*std::get<LC_CPTR>(current)) = true;
+            std::get<DECISION>(*std::get<LC_CPTR>(current)) = std::get<DEC>(std::get<LPU>(p));
+            ++nleaves;
+          }
+          auto nextl = std::make_tuple(std::get<LC_CPTR>(current), leftChildMonitor, rightChildMonitor, level+1);
+          que.push(nextl);
         }
-        que.push(nextl);
       }
 
       if ( std::get<RC_MON>(e).any() ) {
-        q = find_split(dm, nSplitFeatures, std::get<RC_MON>(e));
-std::cout << "q: " << level << " " << std::get<0>(q) << " " << std::get<1>(q) << " " << std::get<2>(q) << " [" << std::get<RC_MON>(e) << "] " << std::get<0>(std::get<3>(q)) << " " << std::get<1>(std::get<3>(q)) << " " << std::get<0>(std::get<4>(q)) << " " << std::get<1>(std::get<4>(q)) << std::endl;
-        std::get<RC_CPTR>(current) = new Core(std::get<FID>(q), std::get<SPV>(q), noLeaf, noDecision);
-
-        parentMonitor = std::get<RC_MON>(e);
-        rightChildMonitor = std::get<MON>(q);
-        leftChildMonitor = ~rightChildMonitor & parentMonitor;
-        auto nextr = std::make_tuple(std::get<RC_CPTR>(current), leftChildMonitor, rightChildMonitor, level+1);
-
-        if ( done(std::get<PUR>(std::get<LPU>(q)), std::get<PUR>(std::get<RPU>(q)), level, nleaves, rightChildMonitor, parentMonitor) ) {
-std::cout << "done" << std::endl;
-          std::get<FID>(*std::get<RC_CPTR>(current)) = 0;
-          std::get<SPV>(*std::get<RC_CPTR>(current)) = 0;
-          std::get<LC_MON>(nextr).reset();
-          std::get<RC_MON>(nextr).reset();
-          std::get<ISLEAF>(*std::get<RC_CPTR>(current)) = true;
-          std::get<DECISION>(*std::get<RC_CPTR>(current)) = std::get<DEC>(std::get<RPU>(q));
+        auto check = pure_enough(dm, std::get<RC_MON>(e), _dtp);
+        if ( std::get<0>(check) ) { // pure enough to be a leaf
+          const std::size_t decision = std::get<1>(check);
+          std::get<RC_CPTR>(current) = new Core(0, 0, isLeaf, decision);
+          Monitor unmonitored;
+          auto nextr = std::make_tuple(std::get<RC_CPTR>(current), unmonitored, unmonitored, level+1);
+          que.push(nextr);
           ++nleaves;
+        } else {
+          q = find_split(dm, nSplitFeatures, std::get<RC_MON>(e));
+          std::get<RC_CPTR>(current) = new Core(std::get<FID>(q), std::get<SPV>(q), noLeaf, noDecision);
+          parentMonitor = std::get<RC_MON>(e);
+          rightChildMonitor = std::get<MON>(q);
+          leftChildMonitor = ~rightChildMonitor & parentMonitor;
+
+          if ( !rightChildMonitor.any() || rightChildMonitor == parentMonitor ) { // did not split
+            q = man_split(dm, parentMonitor); // force a split
+            std::get<FID>(*std::get<LC_CPTR>(current)) = std::get<FID>(q);
+            std::get<SPV>(*std::get<LC_CPTR>(current)) = std::get<SPV>(q);
+            parentMonitor = std::get<LC_MON>(e);
+            rightChildMonitor = std::get<MON>(q);
+            leftChildMonitor = ~rightChildMonitor & parentMonitor;
+            if ( !rightChildMonitor.any() || rightChildMonitor == parentMonitor ) { // cannot be split further
+              std::get<FID>(*std::get<LC_CPTR>(current)) = 0;
+              std::get<SPV>(*std::get<LC_CPTR>(current)) = 0;
+              std::get<ISLEAF>(*std::get<LC_CPTR>(current)) = true;
+              std::get<DECISION>(*std::get<LC_CPTR>(current)) = std::get<DEC>(std::get<RPU>(q));
+              leftChildMonitor.reset();
+              rightChildMonitor.reset();
+            }
+          } else if ( done(std::get<PUR>(std::get<LPU>(q)), std::get<PUR>(std::get<RPU>(q)), level, nleaves) ) {
+            std::get<FID>(*std::get<RC_CPTR>(current)) = 0;
+            std::get<SPV>(*std::get<RC_CPTR>(current)) = 0;
+            leftChildMonitor.reset();
+            rightChildMonitor.reset();
+            std::get<ISLEAF>(*std::get<RC_CPTR>(current)) = true;
+            std::get<DECISION>(*std::get<RC_CPTR>(current)) = std::get<DEC>(std::get<RPU>(q));
+            ++nleaves;
+          }
+          auto nextr = std::make_tuple(std::get<RC_CPTR>(current), leftChildMonitor, rightChildMonitor, level+1);
+          que.push(nextr);
         }
-        que.push(nextr);
       }
       _nodes.push_back(current);
       que.pop();
@@ -519,11 +564,10 @@ std::cout << "done" << std::endl;
 
   // may add in _minLeafSamples eventually
   inline bool
-  done(dtype lchildPurity, dtype rchildPurity, std::size_t level, std::size_t nLeaves, const Monitor& updated, const Monitor& previous) {
+  done(dtype lchildPurity, dtype rchildPurity, std::size_t level, std::size_t nLeaves) {
     return ((lchildPurity >= _dtp._minPuritySplit) && (rchildPurity >= _dtp._minPuritySplit)) ||
-           (_dtp._maxDepth && level > _dtp._maxDepth)   ||
-           (_dtp._maxLeafNodes && nLeaves >= _dtp._maxLeafNodes) ||
-           (_dtp._splitStrategy == SplitStrategy::BEST && updated == previous); // BEST found no way to split further
+           (_dtp._maxDepth && level > _dtp._maxDepth) ||
+           (_dtp._maxLeafNodes && nLeaves >= _dtp._maxLeafNodes);
   }
 
   inline bool
@@ -745,7 +789,7 @@ protected:
     auto iter = values.begin(), iter_end = values.end();
     std::tuple<dtype, dtype, std::tuple<label, dtype>, std::tuple<label, dtype>> rtn(0,0,std::make_tuple(0,0), std::make_tuple(0,0));
     Monitor mask(monitor);
-    if ( s == SplitStrategy::BEST) { // find best value to split on; smallest gini is best
+    if ( s == SplitStrategy::BEST ) { // find best value to split on; smallest gini is best
       std::set<dtype> uniq_scores;
       while ( iter != iter_end ) { // const iterators
         if ( monitor[iter.index()] )
@@ -755,7 +799,7 @@ protected:
       } // while
       if ( includeZeroes && mask.any() )
         uniq_scores.insert(0);
-
+ 
       dtype best_score = std::numeric_limits<dtype>::max();
       for ( auto u : uniq_scores ) {
         auto v = u + std::numeric_limits<dtype>::epsilon();
@@ -835,6 +879,93 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
           throw std::domain_error("Unknown criterion in evaluate()");
     }
 
+  }
+
+  std::tuple<featureID, dtype, Monitor, std::tuple<label, dtype>, std::tuple<label, dtype>>
+  man_split(const DataMatrix& dm, Monitor mask) {
+    /* this is an expensive function which should not be called except in extreme cases as a final save to
+         split more rows.  if this is being called fairly often, you need to increase the number of splits
+         at each step or use zeroes or ...
+       this is a greedy, first come, first served function that does not attempt to find any optimal split
+         value - it will use the first that it can find that separates two monitored rows with differing
+         labels
+    */
+    const auto& labels = ub::column(dm, 0);
+    const label unset = std::numeric_limits<label>::max();
+    const bool done = false;
+    std::size_t a = 0, b = 0;
+    std::size_t idx = 0;
+    bool first = true;
+    while ( !done ) {
+      // find two monitored rows with different labels
+      if ( first )
+        idx = mask.find_first();
+      else
+        idx = mask.find_next(a);
+
+      label A = unset;
+      while ( idx != Monitor::npos ) {
+        if ( A != unset ) {
+          if ( labels[idx] != A ) {
+            b = idx;
+            break;
+          }
+        } else {
+          A = labels[idx];
+          a = idx;
+        }
+        idx = mask.find_next(idx);
+      } // while
+
+      if ( idx == Monitor::npos ) { // ultimate stopping condition
+        // all monitored rows from a->#rows is labeled the same
+        return std::make_tuple(0, 0, mask, std::make_tuple(0,1), std::make_tuple(0,1));
+      }
+
+      // find first feature that can separate these different labels
+      for ( std::size_t features = 1; features < dm.size2(); ++features ) {
+        const auto& values = ub::column(dm, features);
+        if ( !_dtp._useImpliedZerosInSplitDecision && (values[a]==0 || values[b]==0) )
+          continue;
+        dtype absdiff = std::abs(values[a]-values[b]);
+        bool equal = (absdiff <= 2*std::numeric_limits<dtype>::epsilon()); // mult2 since div2 below
+        if ( !equal ) { // at least these two rows can be separated
+          const dtype two = 2.0;
+          dtype value = (values[a]+values[b])/two;
+
+          std::array<dtype, 2> nl = { 0, 0 }; // how many instances of each class in left branch
+          auto nr = nl; //  how many instances of each class in right branch
+          if ( _dtp._useImpliedZerosInSplitDecision ) {
+            for ( std::size_t i = 0; i < values.size(); ++i ) {
+              if ( mask[i] ) {
+                if ( values[i] > value )
+                  nr[labels[i]]++;
+                else {
+                  nl[labels[i]]++;
+                  mask[i] = false;
+                }
+              }
+            } // for
+          } else { // only look at labels of rows with nonZero values for this featColumn
+            for ( auto viter = values.begin(); viter != values.end(); ++viter ) { // these are const_iterators due to values
+              if ( mask[viter.index()] ) {
+                if ( *viter > value )
+                  nr[labels[viter.index()]]++;
+                else {
+                  nl[labels[viter.index()]]++;
+                  mask[viter.index()] = false;
+                }
+              }
+            } // for
+          }
+          return std::make_tuple(features, value, mask, purity(nl), purity(nr));
+        }
+      } // for
+
+      // found no feature to separate these different labels...try again?
+      first = false;
+    } // while
+    throw std::domain_error("Not supposed to reach here: man_split()");
   }
 
   // find_split() returns feature ID, split value and monitor showing bit masking -> consider only those set
