@@ -38,18 +38,22 @@ namespace Utils {
 
 enum struct Nums { BIGINT, PLUSBIGINT, PLUSBIGINT_NOZERO, INT, PLUSINT, PLUSINT_NOZERO, REAL, PLUSREAL, PLUSREAL_NOZERO, BOOL };
 
+std::string uppercase(const std::string&);
+
 /* basic stuff only:
     doesn't support scientific notation
     doesn't allow '+' out in front
     certainly others
 */
 template <typename T>
-T convert(const std::string& v, Nums constraint) {
+T
+convert(const std::string& v, Nums constraint) {
   static const std::string PlusInts = "0123456789";
   static const std::string Ints = "-" + PlusInts;
   static const std::string PlusReals = "." + PlusInts;
   static const std::string Reals = "." + Ints;
   static const std::string Bools = "01";
+  static const std::string Bools2 = "TF";
 
   switch (constraint) {
     case Nums::BIGINT:
@@ -113,8 +117,13 @@ T convert(const std::string& v, Nums constraint) {
         throw std::domain_error("Bad <+int> gt 0: " + v);
       break;
     case Nums::BOOL:
-      if ( v.find_first_not_of(Bools) != std::string::npos )
-        throw std::domain_error("Unknown <bool> numeric: " + v);
+      if ( v.size() != 1 ) {
+        if ( uppercase(v) != "TRUE" || uppercase(v) != "FALSE" )
+          throw std::domain_error("Unknown <bool> value: " + v);
+      } else if ( v.find_first_not_of(Bools) != std::string::npos ) {
+          if ( uppercase(v).find_first_not_of(Bools2) != std::string::npos )
+            throw std::domain_error("Unknown <bool> value: " + v);
+      }
       break;
     default:
       throw std::domain_error("program error: unknown numeric in dtp::set_value()");
@@ -129,7 +138,7 @@ T convert(const std::string& v, Nums constraint) {
 struct ByLine : public std::string {
   friend std::istream& operator>>(std::istream& is, ByLine& b) {
     std::getline(is, b);
-    return(is);
+    return is;
   }
 };
 
@@ -145,7 +154,8 @@ split(const std::string& s, const std::string& d) {
   return rtn;
 }
 
-std::string uppercase(const std::string& s) {
+std::string
+uppercase(const std::string& s) {
   std::string rtn = s;
   for ( std::size_t i = 0; i < rtn.size(); ++i )
     rtn[i] = std::toupper(rtn[i]);

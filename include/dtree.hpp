@@ -499,14 +499,6 @@ protected:
               leftChildMonitor.reset();
               rightChildMonitor.reset();
             }
-          } else if ( done(std::get<PUR>(std::get<LPU>(p)), std::get<PUR>(std::get<RPU>(p)), level, nleaves) ) {
-            std::get<FID>(*std::get<LC_CPTR>(current)) = 0;
-            std::get<SPV>(*std::get<LC_CPTR>(current)) = 0;
-            leftChildMonitor.reset();
-            rightChildMonitor.reset();
-            std::get<ISLEAF>(*std::get<LC_CPTR>(current)) = true;
-            std::get<DECISION>(*std::get<LC_CPTR>(current)) = std::get<DEC>(std::get<LPU>(p));
-            ++nleaves;
           }
           auto nextl = std::make_tuple(std::get<LC_CPTR>(current), leftChildMonitor, rightChildMonitor, level+1);
           que.push(nextl);
@@ -531,27 +523,19 @@ protected:
 
           if ( !rightChildMonitor.any() || rightChildMonitor == parentMonitor ) { // did not split
             q = man_split(dm, parentMonitor); // force a split
-            std::get<FID>(*std::get<LC_CPTR>(current)) = std::get<FID>(q);
-            std::get<SPV>(*std::get<LC_CPTR>(current)) = std::get<SPV>(q);
-            parentMonitor = std::get<LC_MON>(e);
+            std::get<FID>(*std::get<RC_CPTR>(current)) = std::get<FID>(q);
+            std::get<SPV>(*std::get<RC_CPTR>(current)) = std::get<SPV>(q);
+            parentMonitor = std::get<RC_MON>(e);
             rightChildMonitor = std::get<MON>(q);
             leftChildMonitor = ~rightChildMonitor & parentMonitor;
             if ( !rightChildMonitor.any() || rightChildMonitor == parentMonitor ) { // cannot be split further
-              std::get<FID>(*std::get<LC_CPTR>(current)) = 0;
-              std::get<SPV>(*std::get<LC_CPTR>(current)) = 0;
-              std::get<ISLEAF>(*std::get<LC_CPTR>(current)) = true;
-              std::get<DECISION>(*std::get<LC_CPTR>(current)) = std::get<DEC>(std::get<RPU>(q));
+              std::get<FID>(*std::get<RC_CPTR>(current)) = 0;
+              std::get<SPV>(*std::get<RC_CPTR>(current)) = 0;
+              std::get<ISLEAF>(*std::get<RC_CPTR>(current)) = true;
+              std::get<DECISION>(*std::get<RC_CPTR>(current)) = std::get<DEC>(std::get<RPU>(q));
               leftChildMonitor.reset();
               rightChildMonitor.reset();
             }
-          } else if ( done(std::get<PUR>(std::get<LPU>(q)), std::get<PUR>(std::get<RPU>(q)), level, nleaves) ) {
-            std::get<FID>(*std::get<RC_CPTR>(current)) = 0;
-            std::get<SPV>(*std::get<RC_CPTR>(current)) = 0;
-            leftChildMonitor.reset();
-            rightChildMonitor.reset();
-            std::get<ISLEAF>(*std::get<RC_CPTR>(current)) = true;
-            std::get<DECISION>(*std::get<RC_CPTR>(current)) = std::get<DEC>(std::get<RPU>(q));
-            ++nleaves;
           }
           auto nextr = std::make_tuple(std::get<RC_CPTR>(current), leftChildMonitor, rightChildMonitor, level+1);
           que.push(nextr);
@@ -624,9 +608,6 @@ public:
   friend inline // read in a model previously created
   std::istream&
   operator>>(std::istream& input, DecisionTreeClassifier& dtc) {
-    if (!input)
-      return input;
-
     DecisionTreeClassifier::FeatureID fid; // feature id?
     DecisionTreeClassifier::SplitValue spv; // split value?
     bool ilf; // is leaf?
@@ -634,6 +615,8 @@ public:
     std::string open_bracket, closed_bracket;
 
     input >> open_bracket;
+    if ( open_bracket.empty() )
+      return input; // so annoying
 
     std::queue<Core*> que;
     input >> fid;
