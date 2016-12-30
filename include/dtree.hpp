@@ -99,6 +99,7 @@ struct DecisionTreeParameters {
                          std::size_t maxDepth = 0,
                          std::size_t maxLeafNodes = 0,
                          std::size_t minSamplesLeaf = 1,
+                         std::size_t minClassSamples = 0,
                          dtype minPuritySplit = 0.7,
                          bool useImpliedZeroesInSplitDecision = true,
                          ClassWeightType cw = ClassWeightType::SAME,
@@ -110,6 +111,7 @@ struct DecisionTreeParameters {
                     _maxDepth(maxDepth),
                     _maxLeafNodes(maxLeafNodes),
                     _minLeafSamples(minSamplesLeaf),
+                    _minClassSamples(minClassSamples),
                     _minPuritySplit(minPuritySplit),
                     _useImpliedZerosInSplitDecision(useImpliedZeroesInSplitDecision),
                     _classWeightType(cw),
@@ -148,10 +150,22 @@ struct DecisionTreeParameters {
       _argmap[Utils::uppercase("MaxDepth")] = Utils::Nums::PLUSINT; // zero means unused; grow full
       _argmap[Utils::uppercase("MaxLeafNodes")] = Utils::Nums::PLUSINT; // zero means unused
       _argmap[Utils::uppercase("MinLeafSamples")] = Utils::Nums::PLUSREAL; // when set, split until Node has this number or fewer; FLT means % of #rows
+      _argmap[Utils::uppercase("MinClassSamples")] = Utils::Nums::PLUSINT; // when set, stop splitting if any class drops below this value
       _argmap[Utils::uppercase("MinPuritySplit")] = Utils::Nums::PLUSREAL_NOZERO; // split if purity less than this
       _argmap[Utils::uppercase("UseZeroesInSplit")] = Utils::Nums::BOOL; // use missing data == zero ?
       _argmap[Utils::uppercase("Seed")] = Utils::Nums::PLUSINT; // zero means use random seed
       _argmap[Utils::uppercase("SelectSplitNumeric")] = Utils::Nums::PLUSREAL; // if SplitMaxFeatures=INT||FLT, this is the value
+      _argmap[Utils::uppercase("ClassWeights")] = Utils::Nums::PLUSREAL;
+    }
+
+    void set_weights_from_counts(const std::vector<std::size_t>& counts) { // for balanced labels
+      if ( counts.size() != 2 )
+        throw std::domain_error("class only supports binary classification at the moment");
+      else if ( std::count(counts.begin(), counts.end(), 0) != 0 )
+        throw std::domain_error("counts for a class label are 0");
+      dtype total = std::accumulate(counts.begin(), counts.end(), 0);
+      _weights[0] = total/(2*counts[0]);
+      _weights[1] = total/(2*counts[1]);
     }
 
   friend inline
@@ -165,11 +179,16 @@ struct DecisionTreeParameters {
     output << space << "MaxDepth=" << dtp._maxDepth;
     output << space << "MaxLeafNodes=" << dtp._maxLeafNodes;
     output << space << "MinLeafSamples=" << dtp._minLeafSamples;
+    output << space << "MinClassSamples=" << dtp._minClassSamples;
     output << space << "MinPuritySplit=" << dtp._minPuritySplit;
     output << space << "UseZeroesInSplit=" << dtp._useImpliedZerosInSplitDecision;
     output << space << "ClassWeightType=" << int(dtp._classWeightType);
     output << space << "Seed=" << dtp._seed;
     output << space << "SelectSplitNumeric=" << dtp._selectSplitNumeric;
+    output << space << "ClassWeights={" << dtp._weights[0];
+    for ( std::size_t i = 1; i < dtp._weights.size(); ++i )
+      output << "," << dtp._weights[i];
+    output << "}";
     return output;
   }
 
@@ -204,6 +223,8 @@ struct DecisionTreeParameters {
           dtp.set_value(dtp._maxLeafNodes, jev[0], jev[1]);
         else if ( jev[0] == Utils::uppercase("MinLeafSamples") )
           dtp.set_value(dtp._minLeafSamples, jev[0], jev[1]);
+        else if ( jev[0] == Utils::uppercase("MinClassSamples") )
+          dtp.set_value(dtp._minClassSamples, jev[0], jev[1]);
         else if ( jev[0] == Utils::uppercase("MinPuritySplit") )
           dtp.set_value(dtp._minPuritySplit, jev[0], jev[1]);
         else if ( jev[0] == Utils::uppercase("UseZeroesInSplit") )
@@ -212,6 +233,13 @@ struct DecisionTreeParameters {
           dtp.set_value(dtp._seed, jev[0], jev[1]);
         else if ( jev[0] == Utils::uppercase("SelectSplitNumeric") )
           dtp.set_value(dtp._selectSplitNumeric, jev[0], jev[1]);
+        else if ( jev[0] == Utils::uppercase("ClassWeights") ) {
+          jev[1] = jev[1].substr(0,jev[1].size()-1);
+          jev[1] = jev[1].substr(1);
+          auto kev = Utils::split(jev[1], ",");
+          dtp.set_value(dtp._weights[0], jev[0], kev[0]);
+          dtp.set_value(dtp._weights[1], jev[0], kev[1]);
+        }
         else
           throw std::domain_error("model error: operator>> for DecisionTreeParameters: " + v);
       }
@@ -259,6 +287,7 @@ public:
   std::size_t _maxDepth; // 0 means expand until all leaves meet purity criterion or until all nodes contain less than _minLeafSamples
   std::size_t _maxLeafNodes; // 0, then unlimited leaf nodes, else grow a tree until you reach _maxLeafNodes using bfs
   std::size_t _minLeafSamples; // 0, then not a stopping condition, else done splitting if #samples in leaf drops to this level
+  std::size_t _minClassSamples; // 0, then not a stopping condition, else done splitting if any class drops below this value
   dtype _minPuritySplit; // A node will split if its purity is less than the threshold, otherwise it is a leaf
   bool _useImpliedZerosInSplitDecision;
   ClassWeightType _classWeightType;
@@ -266,6 +295,7 @@ public:
 
   // set after or while data are read
   dtype _selectSplitNumeric; // if _splitMaxSelect is INT,FLT then this is the value of the INT or FLT
+  std::array<dtype, 2> _weights;
 
   std::uniform_real_distribution<double> _unif;
   std::mt19937_64 _rng;
@@ -302,10 +332,10 @@ allZeroes(const SparseMatrix& m, std::size_t featureCol, Monitor mask) {
   Hardcoding binary classification for now
 */
 inline std::tuple<std::size_t, dtype>
-purity(const std::array<dtype, 2>& a) {
+purity(const std::array<dtype, 2>& a, const std::array<dtype, 2>& w) {
   if ( 0 == a[0] && 0 == a[1] )
     return std::make_tuple(0,1);
-  return std::make_tuple(a[0]>a[1] ? 0 : 1, std::max(a[0], a[1])/(a[0]+a[1]));
+  return std::make_tuple(a[0]*w[0]>a[1]*w[1] ? 0 : 1, std::max(a[0]*w[0], a[1]*w[1])/(a[0]*w[0]+a[1]*w[1]));
 }
 
 inline label
@@ -332,7 +362,31 @@ pure_enough(const DataMatrix& dm, const Monitor& child, const DecisionTreeParame
     counts[labels[pos]]++;
     pos = child.find_next(pos);
   } // while
-  return std::make_tuple(std::get<1>(purity(counts)) >= dtp._minPuritySplit, counts[0]>counts[1] ? 0 : 1);
+
+  std::size_t total = 0;
+  for ( std::size_t i = 0; i < counts.size(); ++i ) {
+    if ( counts[i] < dtp._minClassSamples )
+      return std::make_tuple(true, counts[0]*dtp._weights[0]>counts[1]*dtp._weights[1] ? 0 : 1);
+    total += counts[i];
+  } // for
+
+  if ( total < dtp._minLeafSamples )
+    return std::make_tuple(true, counts[0]*dtp._weights[0]>counts[1]*dtp._weights[1] ? 0 : 1);
+
+  return std::make_tuple(std::get<1>(purity(counts, dtp._weights)) >= dtp._minPuritySplit, counts[0]*dtp._weights[0]>counts[1]*dtp._weights[1] ? 0 : 1);
+}
+
+inline std::tuple<dtype, std::array<dtype, 2>>
+spit_purity(const DataMatrix& dm, const Monitor& child, const DecisionTreeParameters& dtp) {
+  auto& labels = column(dm, 0);
+  auto pos = child.find_first();
+  std::array<dtype, 2> counts = { 0, 0 }; // how many of each label?
+
+  while ( pos != Monitor::npos ) {
+    counts[labels[pos]]++;
+    pos = child.find_next(pos);
+  } // while
+  return std::make_tuple(std::get<1>(purity(counts, dtp._weights)), counts);
 }
 
 /*
@@ -446,6 +500,7 @@ protected:
     static constexpr std::size_t LEVEL = 3;
 
     if ( done(std::get<PUR>(std::get<LPU>(p)), std::get<PUR>(std::get<RPU>(p))) ) {
+std::cout << "[" << std::endl;
       std::get<LC_CPTR>(current) = new Core(std::get<FID>(p), std::get<SPV>(p), isLeaf, noDecision);
       std::get<FID>(*std::get<LC_CPTR>(current)) = 0;
       std::get<SPV>(*std::get<LC_CPTR>(current)) = 0;
@@ -454,9 +509,25 @@ protected:
       std::get<FID>(*std::get<RC_CPTR>(current)) = 0;
       std::get<SPV>(*std::get<RC_CPTR>(current)) = 0;
       std::get<DECISION>(*std::get<RC_CPTR>(current)) = std::get<DEC>(std::get<RPU>(p));
-      _nodes.push_back(current);
+
+auto& curr = *std::get<PARENT_CPTR>(current);
+bool isleaf = std::get<ISLEAF>(curr);
+std::cout << std::get<FID>(curr) << " " << std::get<SPV>(curr) << " " << isleaf << " " << (isleaf ? std::get<DECISION>(curr) : 0) << std::endl;
+
+auto& durr = *std::get<LC_CPTR>(current);
+isleaf = std::get<ISLEAF>(durr);
+std::cout << std::get<FID>(durr) << " " << std::get<SPV>(durr) << " " << isleaf << " " << (isleaf ? std::get<DECISION>(durr) : 0) << std::endl;
+
+auto& eurr = *std::get<RC_CPTR>(current);
+isleaf = std::get<ISLEAF>(eurr);
+std::cout << std::get<FID>(eurr) << " " << std::get<SPV>(eurr) << " " << isleaf << " " << (isleaf ? std::get<DECISION>(eurr) : 0) << std::endl;
+
+std::cout << "]" << std::endl;
+//      _nodes.push_back(current);
       return;
     }
+
+std::cout << "[" << std::endl;
 
     internal root_internal = std::make_tuple(std::get<PARENT_CPTR>(current), leftChildMonitor, rightChildMonitor, 0);
     std::queue<internal> que;
@@ -541,9 +612,33 @@ protected:
           que.push(nextr);
         }
       }
-      _nodes.push_back(current);
+auto& curr = *std::get<PARENT_CPTR>(current);
+bool isleaf = std::get<ISLEAF>(curr);
+auto foo = spit_purity(dm, std::get<LC_MON>(e), _dtp);
+auto goo = spit_purity(dm, std::get<RC_MON>(e), _dtp);
+std::cout << std::get<FID>(curr) << " " << std::get<SPV>(curr) << " " << isleaf << " " << (isleaf ? std::get<DECISION>(curr) : 0) << " (" << level << "," << std::get<1>(foo)[0] << "," << std::get<1>(foo)[1] << "," << std::get<0>(foo) << " : " << std::get<1>(goo)[0] << "," << std::get<1>(goo)[1] << "," << std::get<0>(goo) << ")" << std::endl;
+//std::cout << std::get<FID>(curr) << " " << std::get<SPV>(curr) << " " << isleaf << " " << (isleaf ? std::get<DECISION>(curr) : 0) << std::endl;
+//      _nodes.push_back(current);
+delete std::get<PARENT_CPTR>(current);
       que.pop();
     } // while
+/*
+Core const* lchild = std::get<LC_CPTR>(current);
+if ( lchild ) {
+  bool isleaf = std::get<ISLEAF>(*lchild);
+  std::cout << std::get<FID>(*lchild) << " " << std::get<SPV>(*lchild) << " "
+            << isleaf << " " << (isleaf ? std::get<DECISION>(*lchild) : 0) << std::endl;
+}
+
+Core const* rchild = std::get<RC_CPTR>(current);
+if ( rchild ) {
+  bool isleaf = std::get<ISLEAF>(*rchild);
+  std::cout << std::get<FID>(*rchild) << " " << std::get<SPV>(*rchild) << " "
+            << isleaf << " " << (isleaf ? std::get<DECISION>(*rchild) : 0) << std::endl;
+}
+*/
+std::cout << "]" << std::endl;
+
   }
 
   // may add in _minLeafSamples eventually
@@ -812,8 +907,8 @@ protected:
 //          std::get<QS>(rtn) = 1-gval;
           std::get<QS>(rtn) = gval;
           std::get<TH>(rtn) = u; // u, not v
-          std::get<LP>(rtn) = purity(nl);
-          std::get<RP>(rtn) = purity(nr);
+          std::get<LP>(rtn) = purity(nl, _dtp._weights);
+          std::get<RP>(rtn) = purity(nr, _dtp._weights);
           best_score = gval;
           if ( best_score == 0 )
             break;
@@ -842,8 +937,8 @@ protected:
       }
 //      std::get<QS>(rtn) = 1-gini(nl, nr);
       std::get<QS>(rtn) = gini(nl, nr);
-      std::get<LP>(rtn) = purity(nl);
-      std::get<RP>(rtn) = purity(nr);
+      std::get<LP>(rtn) = purity(nl, _dtp._weights);
+      std::get<RP>(rtn) = purity(nr, _dtp._weights);
     }
     return rtn;
   }
@@ -861,7 +956,6 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
       default:
           throw std::domain_error("Unknown criterion in evaluate()");
     }
-
   }
 
   std::tuple<featureID, dtype, Monitor, std::tuple<label, dtype>, std::tuple<label, dtype>>
@@ -871,7 +965,7 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
          at each step or use zeroes or ...
        this is a greedy, first come, first served function that does not attempt to find any optimal split
          value - it will use the first that it can find that separates two monitored rows with differing
-         labels
+         labels, if possible.
     */
     const auto& labels = ub::column(dm, 0);
     const label unset = std::numeric_limits<label>::max();
@@ -901,7 +995,7 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
       } // while
 
       if ( idx == Monitor::npos ) { // ultimate stopping condition
-        // all monitored rows from a->#rows is labeled the same
+        // all monitored rows from a->#rows are labeled the same; mask is unchanged
         return std::make_tuple(0, 0, mask, std::make_tuple(0,1), std::make_tuple(0,1));
       }
 
@@ -941,7 +1035,7 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
               }
             } // for
           }
-          return std::make_tuple(features, value, mask, purity(nl), purity(nr));
+          return std::make_tuple(features, value, mask, purity(nl, _dtp._weights), purity(nr, _dtp._weights));
         }
       } // for
 
@@ -964,14 +1058,33 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
     std::tuple<label, dtype> currRPurity(0,0);
     featureID currCol = 0;
     std::set<std::size_t> selectedFeats;
+    bool done = false;
     while ( featureCount < nSplitFeatures ) {
       featureID col = 0;
+      std::size_t save_me = 0;
+      static const std::size_t loopy = 250;
       while (true) {
-// sjn: could loop forever on edge cases - fix this
         col = static_cast<featureID>(std::round(_dtp._unif(_dtp._rng) * numFeatures));
         if ( col > 0 && selectedFeats.insert(col).second && !allZeroes(dm, col, mask) )
           break;
+        if ( ++save_me > loopy ) {
+std::cout << "Save!" << std::endl;
+          static constexpr std::size_t FID = 0;
+          static constexpr std::size_t MSK = 2;
+          auto expensive = man_split(dm, mask); // force-find; may duplicate element in selectedFeats
+          if ( std::get<MSK>(expensive) == mask ) { // found nothing
+            done = true;
+            break;
+          } else {
+            col = std::get<FID>(expensive);
+            selectedFeats.insert(col);
+            break;
+          }
+        }
       } // while
+
+      if ( done )
+        break;
 
       auto val = evaluate(dm, col, mask); // return split quality, split value, ldec/lpurity, rdec/rpurity
       if ( std::get<QS>(val) > currBest ) {
@@ -984,7 +1097,13 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
           break;
       }
       ++featureCount;
+
+if ( save_me > loopy )
+break;
     } // while
+
+    if ( done && selectedFeats.empty() ) // punt...
+      return std::make_tuple(1, 0, mask, std::make_tuple(0,0), std::make_tuple(0,0));
 
     std::size_t beg = mask.find_first();
     if ( currCol == 0 || beg == mask.npos )

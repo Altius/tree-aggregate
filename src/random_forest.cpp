@@ -124,12 +124,18 @@ int main(int argc, char** argv) {
       constexpr std::size_t TST  = 1;
       constexpr std::size_t MXFT = 2;
       constexpr std::size_t MXLB = 3;
+      constexpr std::size_t CNTS = 4;
       auto data = Tree::read_data(input._dataSource, input._oobTests, input._oobPercent);
 
       Tree::DecisionTreeParameters& dtp = *input._dtp;
+      dtp.set_weights_from_counts(std::get<CNTS>(data));
 
       input._nFeatures = static_cast<std::size_t>(std::get<MXFT>(data));
       input._nLabels = static_cast<std::size_t>(std::get<MXLB>(data));
+
+      std::cout << input << std::endl;
+      std::cout << dtp << std::endl;
+
       Forest::RandomForest rf(dtp, std::get<TRN>(data), std::get<TST>(data));
       rf.build_trees(input._nTrees);
 
@@ -146,9 +152,9 @@ int main(int argc, char** argv) {
 */
 
       // save parameters and learned trees
-      std::cout << input << std::endl;
-      std::cout << dtp << std::endl;
-      std::cout << rf << std::endl;
+//      std::cout << input << std::endl;
+//      std::cout << dtp << std::endl;
+//      std::cout << rf << std::endl;
     } else { // classify new features
       // returns doublet: Data to be classified and Max Feature ID
       constexpr std::size_t CLF = 0;
@@ -233,12 +239,14 @@ Input::Input(int argc, char** argv) : _mode(Mode::LEARN),
   dtype splitVal = 0;
   auto criterion = Criterion::GINI;
   auto strategy = SplitStrategy::BEST;
+//auto strategy = SplitStrategy::RANDOM;
   int mxDepth = 0; // no limit at 0
   int mxLeaves = 0; // no limit at 0
   int minLeafSamples = 1; // no limit at 1
-  dtype minPurity = 1.0; // no limit at 1
+  dtype minPurity = 0.8; // no limit at 1
   bool useZeroes = true;
-  ClassWeightType classWeight = ClassWeightType::SAME;
+  ClassWeightType classWeight = ClassWeightType::BALANCED;
+  std::size_t minPerClassSampleSize = 0;
   uint64_t seed = 0; // highly randomized if not set
 
   bool nonopt = false;
@@ -292,11 +300,13 @@ Input::Input(int argc, char** argv) : _mode(Mode::LEARN),
           else { // INT or FLT
             try {
               int dummy = Utils::convert<int>(next[1], Utils::Nums::PLUSINT_NOZERO);
+              splitMaxFeat = SplitMaxFeat::INT;
               splitVal = dummy;
             } catch(std::domain_error de) {
-              double dummy = Utils::convert<double>(next[1], Utils::Nums::PLUSREAL);
+              dtype dummy = Utils::convert<dtype>(next[1], Utils::Nums::PLUSREAL);
               if ( dummy < 0.01 || dummy > 1 )
                 throw std::domain_error("require " + next[0] + " value: 0.01 <= value <= 1");
+              splitMaxFeat = SplitMaxFeat::FLT;
               splitVal = dummy;
             }
           }
@@ -309,8 +319,8 @@ Input::Input(int argc, char** argv) : _mode(Mode::LEARN),
 
   _dtp = new Tree::DecisionTreeParameters(
                                     criterion, strategy, splitMaxFeat, splitVal,
-                                    mxDepth, mxLeaves, minLeafSamples, minPurity,
-                                    useZeroes, classWeight, seed
+                                    mxDepth, mxLeaves, minLeafSamples, minPerClassSampleSize,
+                                    minPurity, useZeroes, classWeight, seed
                                          );
 }
 

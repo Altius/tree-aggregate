@@ -77,7 +77,7 @@ get_features(const std::string& s, char d1, char d2, std::unordered_map<featureI
 }
 
 // for learning
-std::tuple<DataMatrix*, DataMatrixInv*, featureID, label>
+std::tuple<DataMatrix*, DataMatrixInv*, featureID, label, std::vector<std::size_t>>
 read_data(const std::string& source, bool oob, double oobPercent, bool addone=false) {
   std::ifstream infile(source.c_str());
   if ( !infile )
@@ -88,6 +88,7 @@ read_data(const std::string& source, bool oob, double oobPercent, bool addone=fa
   Utils::ByLine bl;
   std::size_t nRows=0, nCols=0, nNonZeroes = 0, mxFeature = 0;
   label mxLabel = (label)0;
+  std::vector<std::size_t> labelCounts(1,0);
   std::unordered_map<featureID, dtype> featureList;
   while ( infile >> bl ) {
     if ( bl.empty() )
@@ -97,8 +98,11 @@ read_data(const std::string& source, bool oob, double oobPercent, bool addone=fa
     if ( mxFeature > nCols )
       nCols = mxFeature;
     nNonZeroes += (featureList.size()-1); // -1 for label
-    if ( featureList[0] > mxLabel )
+    if ( featureList[0] > mxLabel ) {
       mxLabel = featureList[0];
+      labelCounts.resize(mxLabel+1, 0);
+    }
+    labelCounts[featureList[0]] += 1;
     featureList.clear();
   } // while
 
@@ -131,8 +135,10 @@ read_data(const std::string& source, bool oob, double oobPercent, bool addone=fa
       }
       if ( mxFeature > nCols )
         nCols = mxFeature;
-      if ( featureList[0] > mxLabel )
+      if ( featureList[0] > mxLabel ) {
         mxLabel = featureList[0];
+        labelCounts.resize(mxLabel, 0);
+      }
       featureList.clear();
     } // while
     // keep nCols the same between dmOOB and the learning matrix; nCols = finalNCols below
@@ -161,7 +167,7 @@ read_data(const std::string& source, bool oob, double oobPercent, bool addone=fa
     featureList.clear();
   } // while
   mxLabel++; // assume 0 is a valid label
-  return std::make_tuple(dm, dmOOB, finalNCols, mxLabel);
+  return std::make_tuple(dm, dmOOB, finalNCols, mxLabel, labelCounts);
 }
 
 // for predictions
