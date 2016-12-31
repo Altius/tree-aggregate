@@ -177,13 +177,33 @@ read_data(const std::string& source) {
   auto data = read_data(source, false, 0, addonecol);
 //  DataMatrixInv* dmi = new DataMatrixInv(trans(*std::get<0>(data)));
 //DataMatrixInv* dmi = new DataMatrixInv(*std::get<0>(data));
-DataMatrixInv* dmi = new DataMatrixInv(std::get<0>(data)->size1(), std::get<0>(data)->size2());
-for ( std::size_t i = 0; i < std::get<0>(data)->size1(); ++i ) {
-for ( std::size_t j = 0; j < std::get<0>(data)->size2(); ++j )
+DataMatrixInv* dmi = new DataMatrixInv(std::get<0>(data)->size1(), std::get<0>(data)->size2(), std::get<0>(data)->nnz());
+
+const DataMatrix& ref = (*std::get<0>(data));
+
+//std::cout << ref.size1() << " " << ref.size2() << " " << std::get<0>(data)->size1() << " " << std::get<0>(data)->size2() << " " << std::get<0>(data)->nnz() << std::endl;
+
+
+for ( DataMatrix::const_iterator2 iter = ref.begin2(); iter != ref.end2(); ++iter ) {
+  for ( DataMatrix::const_iterator1 jiter = iter.begin(); jiter != iter.end(); ++jiter ) {
+    (*dmi)(jiter.index1(), jiter.index2()) = ref(jiter.index1(), jiter.index2());
+//std::cout << (*dmi)(jiter.index1(), jiter.index2()) << std::endl;
+//    std::cout << jiter.index1() << " " << jiter.index2() << " " << ref(jiter.index1(), jiter.index2()) << std::endl;
+  } // for
+} // for
+
+/*
+std::size_t sz1 = std::get<0>(data)->size1();
+std::size_t sz2 = std::get<0>(data)->size2();
+for ( std::size_t i = 0; i < sz1; ++i ) {
+for ( std::size_t j = 0; j < sz2; ++j ) {
+std::cout << "(" << i << "," << j << ")" << std::endl;
   (*dmi)(i,j) = (*std::get<0>(data))(i,j);
+}
 }
 //std::cout << dmi->size1() << " " << dmi->size2() << " " << std::get<0>(data)->size1() << " " << std::get<0>(data)->size2() << std::endl;
 //std::flush(std::cout);
+*/
   delete std::get<0>(data);
   return std::make_tuple(dmi, std::get<2>(data));
 }

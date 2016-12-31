@@ -243,10 +243,10 @@ Input::Input(int argc, char** argv) : _mode(Mode::LEARN),
   int mxDepth = 0; // no limit at 0
   int mxLeaves = 0; // no limit at 0
   int minLeafSamples = 1; // no limit at 1
-  dtype minPurity = 0.8; // no limit at 1
+  dtype minPurity = 0.7; // no limit at 1
   bool useZeroes = true;
   ClassWeightType classWeight = ClassWeightType::BALANCED;
-  std::size_t minPerClassSampleSize = 0;
+  std::size_t minPerClassSampleSize = 1;
   uint64_t seed = 0; // highly randomized if not set
 
   bool nonopt = false;
