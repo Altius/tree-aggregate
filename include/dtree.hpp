@@ -540,7 +540,6 @@ protected:
       const std::size_t level = std::get<LEVEL>(e);
       current = Node(std::get<PARENT_CPTR>(e), nullptr, nullptr);
       bool leftIn = false;
-      bool rightIn = false;
       if ( std::get<LC_MON>(e).any() ) {
         leftIn = true;
         auto check = pure_enough(dm, std::get<LC_MON>(e), _dtp);
@@ -581,7 +580,6 @@ protected:
       }
 
       if ( std::get<RC_MON>(e).any() ) {
-        rightIn = true;
         if ( !leftIn ) { // must keep sibling that comes first
           std::get<LC_CPTR>(current) = new Core(0, 0, 1, 0); // leaf with decision=0
           Monitor unmonitor;
@@ -752,8 +750,6 @@ public:
   std::ostream&
   operator<<(std::ostream& output, const DecisionTreeClassifier& dtc) {
     static constexpr std::size_t PAR = dtc.PARENT;
-    static constexpr std::size_t LCHILD = dtc.LEFTCHILD;
-    static constexpr std::size_t RCHILD = dtc.RIGHTCHILD;
 
     static constexpr std::size_t FID = dtc.FID;
     static constexpr std::size_t SPV = dtc.THOLD;
@@ -902,6 +898,8 @@ protected:
       std::get<QS>(rtn) = gini(nl, nr);
       std::get<LP>(rtn) = purity(nl, _dtp._weights);
       std::get<RP>(rtn) = purity(nr, _dtp._weights);
+    } else {
+      throw std::domain_error("unknown split strategy");
     }
     return rtn;
   }
@@ -1102,9 +1100,6 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
           break;
       }
       ++featureCount;
-
-//if ( save_me > loopy )
-//break;
     } // while
 
     if ( done )

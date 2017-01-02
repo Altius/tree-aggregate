@@ -43,7 +43,8 @@
 std::string Usage(const std::string& progName) {
   std::string msg;
   msg += progName + " --help or --version";
-  msg += "\n" + progName + " learn [--njobs=<+int>] [--xval=<out-of-bag-percentage>] [--seed=<+int>] [--nsplit-features=<SQRT|LOG2|+int|+perc>] <number-trees> <labeled-features>";
+  msg += "\n" + progName + " learn [--njobs=<+int>] [--xval=<+real>] [--seed=<+int>] [--nsplit-features=<SQRT|LOG2|+int|+perc>]";
+  msg += "\n                     [--min-purity=<+real>] [--split-strategy=<RANDOM|BEST>] <number-trees> <labeled-features>";
   msg += "\n" + progName + " predict [--njobs=<+integer>] <model> <new-features>";
   msg += "\n" + progName + " Most output goes to stdout.  The result of an optional cross-validation using --xval is sent to stderr.";
   return msg;
@@ -273,7 +274,7 @@ Input::Input(int argc, char** argv) : _mode(Mode::LEARN),
 
       if ( next[0] == "--njobs" )
         _nJobs = Utils::convert<decltype(_nJobs)>(next[1], Utils::Nums::PLUSINT);
-      else { // specific to _mode == Mode::LEARN
+      else { // option must be specific to _mode == Mode::LEARN
         if ( _mode != Mode::LEARN )
           throw std::domain_error(next[0] + " does not make sense when not in learn mode");
 
@@ -286,6 +287,12 @@ Input::Input(int argc, char** argv) : _mode(Mode::LEARN),
         else if ( next[0] == "--seed" ) {
           seed = Utils::convert<decltype(seed)>(next[1], Utils::Nums::PLUSBIGINT);
         }
+        else if ( next[0] == "--split-strategy" ) {
+          if ( Utils::uppercase(next[1]) == "RANDOM" )
+            strategy = SplitStrategy::RANDOM;
+          else if ( Utils::uppercase(next[1]) != "BEST" ) // BEST is default
+            throw std::domain_error("--split-strategy must be set to random or best");
+        }
         else if ( next[0] == "--nsplit-features" ) {
           if ( Utils::uppercase(next[1]) == "SQRT" )
             splitMaxFeat = SplitMaxFeat::SQRT;
@@ -297,13 +304,18 @@ Input::Input(int argc, char** argv) : _mode(Mode::LEARN),
               splitMaxFeat = SplitMaxFeat::INT;
               splitVal = dummy;
             } catch(std::domain_error de) {
-              dtype dummy = Utils::convert<dtype>(next[1], Utils::Nums::PLUSREAL);
+              dtype dummy = Utils::convert<dtype>(next[1], Utils::Nums::PLUSREAL_NOZERO);
               if ( dummy < 0.01 || dummy > 1 )
                 throw std::domain_error("require " + next[0] + " value: 0.01 <= value <= 1");
               splitMaxFeat = SplitMaxFeat::FLT;
               splitVal = dummy;
             }
           }
+        } else if ( next[0] == "--min-purity" ) {
+          dtype dummy = Utils::convert<dtype>(next[1], Utils::Nums::PLUSREAL_NOZERO);
+          if ( dummy < 0.01 || dummy > 1 )
+            throw std::domain_error("require " + next[0] + " value: 0.01 <= value <= 1");
+          minPurity = dummy;
         }
         else
           throw std::domain_error("unknown option: " + next[0]);
