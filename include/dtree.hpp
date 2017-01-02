@@ -565,7 +565,7 @@ protected:
             parentMonitor = std::get<LC_MON>(e);
             rightChildMonitor = std::get<MON>(p);
             leftChildMonitor = ~rightChildMonitor & parentMonitor;
-            if ( /*!rightChildMonitor.any() ||*/ rightChildMonitor == parentMonitor ) { // cannot be split further
+            if ( rightChildMonitor == parentMonitor ) { // cannot be split further
               std::get<FID>(*std::get<LC_CPTR>(current)) = 0;
               std::get<SPV>(*std::get<LC_CPTR>(current)) = 0;
               std::get<ISLEAF>(*std::get<LC_CPTR>(current)) = true;
@@ -609,7 +609,7 @@ protected:
             parentMonitor = std::get<RC_MON>(e);
             rightChildMonitor = std::get<MON>(q);
             leftChildMonitor = ~rightChildMonitor & parentMonitor;
-            if ( /*!rightChildMonitor.any() ||*/ rightChildMonitor == parentMonitor ) { // cannot be split further
+            if ( rightChildMonitor == parentMonitor ) { // cannot be split further
               std::get<FID>(*std::get<RC_CPTR>(current)) = 0;
               std::get<SPV>(*std::get<RC_CPTR>(current)) = 0;
               std::get<ISLEAF>(*std::get<RC_CPTR>(current)) = true;

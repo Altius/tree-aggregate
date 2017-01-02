@@ -1,0 +1,3 @@
+read_data seg faults when in learn mode and there is no label
+multithreading
+expose more options
