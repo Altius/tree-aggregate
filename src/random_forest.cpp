@@ -150,11 +150,6 @@ int main(int argc, char** argv) {
         std::cerr << stats << std::endl;
       }
 */
-
-      // save parameters and learned trees
-//      std::cout << input << std::endl;
-//      std::cout << dtp << std::endl;
-//      std::cout << rf << std::endl;
     } else { // classify new features
       // returns doublet: Data to be classified and Max Feature ID
       constexpr std::size_t CLF = 0;
@@ -239,11 +234,10 @@ Input::Input(int argc, char** argv) : _mode(Mode::LEARN),
   dtype splitVal = 0;
   auto criterion = Criterion::GINI;
   auto strategy = SplitStrategy::BEST;
-//auto strategy = SplitStrategy::RANDOM;
   int mxDepth = 0; // no limit at 0
   int mxLeaves = 0; // no limit at 0
   int minLeafSamples = 1; // no limit at 1
-  dtype minPurity = 0.7; // no limit at 1
+  dtype minPurity = 1; // no limit at 1
   bool useZeroes = true;
   ClassWeightType classWeight = ClassWeightType::BALANCED;
   std::size_t minPerClassSampleSize = 1;

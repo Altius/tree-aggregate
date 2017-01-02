@@ -61,10 +61,8 @@ struct RandomForest {
 // need to separate uniform prng from dtp, make dtp const above and in DTC class, and in main()
 // each thread receives its own prng with some unique offset from the given _seed
       nextTree->learn(*_dm);
-//std::cout << *nextTree << std::endl;
-//std::flush(std::cout);
-delete nextTree;
-//      _forest.push_back(nextTree);
+      // _forest.push_back(nextTree);
+      delete nextTree;
     } // for
   }
 

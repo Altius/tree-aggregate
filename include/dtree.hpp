@@ -23,10 +23,6 @@
 //    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 //
 
-/*
-  I've spent time worrying about epsilon() in certain situations, but not all yet.
-*/
-
 #ifndef __ALTIUS_DTREE_HPP__
 #define __ALTIUS_DTREE_HPP__
 
@@ -276,7 +272,7 @@ private:
   template <typename T>
   void set_value(T& t, const std::string& s, const std::string& v) { t = check_value<T>(s,v); }
 
-// sjn private:
+// sjn private: for now public
 public:
   friend struct DecisionTreeClassifier;
 
@@ -339,15 +335,16 @@ purity(const std::array<dtype, 2>& a, const std::array<dtype, 2>& w) {
 }
 
 inline label
-vote_majority(const DataMatrix& dm, const Monitor& m) {
-  std::vector<label> call;
+weighted_vote_majority(const DataMatrix& dm, const Monitor& m, const DecisionTreeParameters& dtp) {
+  std::vector<dtype> call;
   auto pos = m.find_first();
-  auto& labels = column(dm, 0);
+  auto& labels = column(dm, 0); // 0-based
   while ( pos != Monitor::npos ) {
-    label value = labels[pos];
-    if ( call.size() <= value )
-      call.resize(static_cast<std::size_t>(value), (label)0);
-    call[value] += 1;
+    label labval = labels[pos];
+    if ( call.size() <= labval )
+      call.resize(static_cast<std::size_t>(labval+1), (label)0);
+    call[labval] += 1*dtp._weights[labval];
+    pos = m.find_next(pos);
   } // while
   return static_cast<label>(std::max_element(call.begin(), call.end()) - call.begin());
 }
@@ -481,7 +478,6 @@ protected:
     static constexpr std::size_t DEC = 0;
     static constexpr std::size_t PUR = 1;
 
-// sjn might make better sense to make the 3 monitors pointers everywhere; test performance later
     const bool noLeaf = false;
     const bool isLeaf = true;
     const std::size_t noDecision = std::numeric_limits<std::size_t>::max();
@@ -500,7 +496,6 @@ protected:
     static constexpr std::size_t LEVEL = 3;
 
     if ( done(std::get<PUR>(std::get<LPU>(p)), std::get<PUR>(std::get<RPU>(p))) ) {
-std::cout << "[" << std::endl;
       std::get<LC_CPTR>(current) = new Core(std::get<FID>(p), std::get<SPV>(p), isLeaf, noDecision);
       std::get<FID>(*std::get<LC_CPTR>(current)) = 0;
       std::get<SPV>(*std::get<LC_CPTR>(current)) = 0;
@@ -510,24 +505,29 @@ std::cout << "[" << std::endl;
       std::get<SPV>(*std::get<RC_CPTR>(current)) = 0;
       std::get<DECISION>(*std::get<RC_CPTR>(current)) = std::get<DEC>(std::get<RPU>(p));
 
-auto& curr = *std::get<PARENT_CPTR>(current);
-bool isleaf = std::get<ISLEAF>(curr);
-std::cout << std::get<FID>(curr) << " " << std::get<SPV>(curr) << " " << isleaf << " " << (isleaf ? std::get<DECISION>(curr) : 0) << std::endl;
 
-auto& durr = *std::get<LC_CPTR>(current);
-isleaf = std::get<ISLEAF>(durr);
-std::cout << std::get<FID>(durr) << " " << std::get<SPV>(durr) << " " << isleaf << " " << (isleaf ? std::get<DECISION>(durr) : 0) << std::endl;
+      std::cout << "[" << std::endl;
+      auto& curr = *std::get<PARENT_CPTR>(current);
+      bool isleaf = std::get<ISLEAF>(curr);
+      std::cout << std::get<FID>(curr) << " " << std::get<SPV>(curr) << " "
+                << isleaf << " " << (isleaf ? std::get<DECISION>(curr) : 0) << std::endl;
 
-auto& eurr = *std::get<RC_CPTR>(current);
-isleaf = std::get<ISLEAF>(eurr);
-std::cout << std::get<FID>(eurr) << " " << std::get<SPV>(eurr) << " " << isleaf << " " << (isleaf ? std::get<DECISION>(eurr) : 0) << std::endl;
+      auto& durr = *std::get<LC_CPTR>(current);
+      isleaf = std::get<ISLEAF>(durr);
+      std::cout << std::get<FID>(durr) << " " << std::get<SPV>(durr) << " "
+                << isleaf << " " << (isleaf ? std::get<DECISION>(durr) : 0) << std::endl;
 
-std::cout << "]" << std::endl;
-//      _nodes.push_back(current);
+      auto& eurr = *std::get<RC_CPTR>(current);
+      isleaf = std::get<ISLEAF>(eurr);
+      std::cout << std::get<FID>(eurr) << " " << std::get<SPV>(eurr) << " "
+                << isleaf << " " << (isleaf ? std::get<DECISION>(eurr) : 0) << std::endl;
+
+      std::cout << "]" << std::endl;
       return;
     }
 
-std::cout << "[" << std::endl;
+
+    std::cout << "[" << std::endl;
 
     internal root_internal = std::make_tuple(std::get<PARENT_CPTR>(current), leftChildMonitor, rightChildMonitor, 0);
     std::queue<internal> que;
@@ -539,10 +539,10 @@ std::cout << "[" << std::endl;
       auto& e = que.front();
       const std::size_t level = std::get<LEVEL>(e);
       current = Node(std::get<PARENT_CPTR>(e), nullptr, nullptr);
-bool leftIn = false;
-bool rightIn = false;
+      bool leftIn = false;
+      bool rightIn = false;
       if ( std::get<LC_MON>(e).any() ) {
-leftIn = true;
+        leftIn = true;
         auto check = pure_enough(dm, std::get<LC_MON>(e), _dtp);
         if ( std::get<0>(check) ) { // pure enough to be a leaf
           const std::size_t decision = std::get<1>(check);
@@ -558,18 +558,19 @@ leftIn = true;
           rightChildMonitor = std::get<MON>(p);
           leftChildMonitor = ~rightChildMonitor & parentMonitor;
 
-          if ( !rightChildMonitor.any() || rightChildMonitor == parentMonitor ) { // did not split
+          if ( !rightChildMonitor.any() || rightChildMonitor == parentMonitor ) { // did not split, or all split left
             p = man_split(dm, parentMonitor); // force a split
             std::get<FID>(*std::get<LC_CPTR>(current)) = std::get<FID>(p);
             std::get<SPV>(*std::get<LC_CPTR>(current)) = std::get<SPV>(p);
             parentMonitor = std::get<LC_MON>(e);
             rightChildMonitor = std::get<MON>(p);
             leftChildMonitor = ~rightChildMonitor & parentMonitor;
-            if ( !rightChildMonitor.any() || rightChildMonitor == parentMonitor ) { // cannot be split further
+            if ( /*!rightChildMonitor.any() ||*/ rightChildMonitor == parentMonitor ) { // cannot be split further
               std::get<FID>(*std::get<LC_CPTR>(current)) = 0;
               std::get<SPV>(*std::get<LC_CPTR>(current)) = 0;
               std::get<ISLEAF>(*std::get<LC_CPTR>(current)) = true;
-              std::get<DECISION>(*std::get<LC_CPTR>(current)) = std::get<DEC>(std::get<LPU>(p));
+              std::get<DECISION>(*std::get<LC_CPTR>(current)) = weighted_vote_majority(dm, parentMonitor, _dtp);
+              ++nleaves;
               leftChildMonitor.reset();
               rightChildMonitor.reset();
             }
@@ -580,13 +581,13 @@ leftIn = true;
       }
 
       if ( std::get<RC_MON>(e).any() ) {
-rightIn = true;
-if ( !leftIn ) { // must keep sibling that comes first
-  std::get<LC_CPTR>(current) = new Core(0, 0, 1, 0); // leaf with decision=0
-  Monitor unmonitor;
-  auto nextl = std::make_tuple(std::get<LC_CPTR>(current), unmonitor, unmonitor, level+1);
-  que.push(nextl);
-}
+        rightIn = true;
+        if ( !leftIn ) { // must keep sibling that comes first
+          std::get<LC_CPTR>(current) = new Core(0, 0, 1, 0); // leaf with decision=0
+          Monitor unmonitor;
+          auto nextl = std::make_tuple(std::get<LC_CPTR>(current), unmonitor, unmonitor, level+1);
+          que.push(nextl);
+        }
         auto check = pure_enough(dm, std::get<RC_MON>(e), _dtp);
         if ( std::get<0>(check) ) { // pure enough to be a leaf
           const std::size_t decision = std::get<1>(check);
@@ -601,19 +602,19 @@ if ( !leftIn ) { // must keep sibling that comes first
           parentMonitor = std::get<RC_MON>(e);
           rightChildMonitor = std::get<MON>(q);
           leftChildMonitor = ~rightChildMonitor & parentMonitor;
-
-          if ( !rightChildMonitor.any() || rightChildMonitor == parentMonitor ) { // did not split
+          if ( !rightChildMonitor.any() || rightChildMonitor == parentMonitor ) { // did not split, or all split left
             q = man_split(dm, parentMonitor); // force a split
             std::get<FID>(*std::get<RC_CPTR>(current)) = std::get<FID>(q);
             std::get<SPV>(*std::get<RC_CPTR>(current)) = std::get<SPV>(q);
             parentMonitor = std::get<RC_MON>(e);
             rightChildMonitor = std::get<MON>(q);
             leftChildMonitor = ~rightChildMonitor & parentMonitor;
-            if ( !rightChildMonitor.any() || rightChildMonitor == parentMonitor ) { // cannot be split further
+            if ( /*!rightChildMonitor.any() ||*/ rightChildMonitor == parentMonitor ) { // cannot be split further
               std::get<FID>(*std::get<RC_CPTR>(current)) = 0;
               std::get<SPV>(*std::get<RC_CPTR>(current)) = 0;
               std::get<ISLEAF>(*std::get<RC_CPTR>(current)) = true;
-              std::get<DECISION>(*std::get<RC_CPTR>(current)) = std::get<DEC>(std::get<RPU>(q));
+              std::get<DECISION>(*std::get<RC_CPTR>(current)) = weighted_vote_majority(dm, parentMonitor, _dtp);
+              ++nleaves;
               leftChildMonitor.reset();
               rightChildMonitor.reset();
             }
@@ -621,40 +622,23 @@ if ( !leftIn ) { // must keep sibling that comes first
           auto nextr = std::make_tuple(std::get<RC_CPTR>(current), leftChildMonitor, rightChildMonitor, level+1);
           que.push(nextr);
         }
+      } else if ( leftIn ) { // make symmetric with null
+        std::get<RC_CPTR>(current) = new Core(0, 0, 1, 0); // leaf with decision=0
+        Monitor unmonitor;
+        auto nextr = std::make_tuple(std::get<RC_CPTR>(current), unmonitor, unmonitor, level+1);
+        que.push(nextr);
       }
-else if ( leftIn ) { // make symmetric with null
-  std::get<RC_CPTR>(current) = new Core(0, 0, 1, 0); // leaf with decision=0
-  Monitor unmonitor;
-  auto nextr = std::make_tuple(std::get<LC_CPTR>(current), unmonitor, unmonitor, level+1);
-  que.push(nextr);
-}
 
-auto& curr = *std::get<PARENT_CPTR>(current);
-bool isleaf = std::get<ISLEAF>(curr);
-//auto foo = spit_purity(dm, std::get<LC_MON>(e), _dtp);
-//auto goo = spit_purity(dm, std::get<RC_MON>(e), _dtp);
-//std::cout << std::get<FID>(curr) << " " << std::get<SPV>(curr) << " " << isleaf << " " << (isleaf ? std::get<DECISION>(curr) : 0) << " (" << level << "," << std::get<1>(foo)[0] << "," << std::get<1>(foo)[1] << "," << std::get<0>(foo) << " : " << std::get<1>(goo)[0] << "," << std::get<1>(goo)[1] << "," << std::get<0>(goo) << ")" << std::endl;
-std::cout << std::get<FID>(curr) << " " << std::get<SPV>(curr) << " " << isleaf << " " << (isleaf ? std::get<DECISION>(curr) : 0) << std::endl;
-//      _nodes.push_back(current);
-delete std::get<PARENT_CPTR>(current);
+      auto& curr = *std::get<PARENT_CPTR>(current);
+      bool isleaf = std::get<ISLEAF>(curr);
+      std::cout << std::get<FID>(curr) << " " << std::get<SPV>(curr) << " "
+                << isleaf << " " << (isleaf ? std::get<DECISION>(curr) : 0) << std::endl;
+
+      delete std::get<PARENT_CPTR>(current);
       que.pop();
     } // while
 
-Core const* lchild = std::get<LC_CPTR>(current);
-if ( lchild ) {
-  bool isleaf = std::get<ISLEAF>(*lchild);
-  std::cout << std::get<FID>(*lchild) << " " << std::get<SPV>(*lchild) << " "
-            << isleaf << " " << (isleaf ? std::get<DECISION>(*lchild) : 0) << std::endl;
-}
-
-Core const* rchild = std::get<RC_CPTR>(current);
-if ( rchild ) {
-  bool isleaf = std::get<ISLEAF>(*rchild);
-  std::cout << std::get<FID>(*rchild) << " " << std::get<SPV>(*rchild) << " "
-            << isleaf << " " << (isleaf ? std::get<DECISION>(*rchild) : 0) << std::endl;
-}
-
-std::cout << "]" << std::endl;
+    std::cout << "]" << std::endl;
 
   }
 
@@ -710,7 +694,7 @@ public:
         throw std::domain_error("program error: unknown split type in learn()");
     }
     if ( nSplitFeatures <= 1 )
-      throw std::domain_error("Unable to fulfill requested nFeatures to split upon (value <= 1).");
+      throw std::domain_error("Unable to fulfill requested nFeatures to split upon (value <= 1).  Did you mean a float like 1.0?");
     else if ( nSplitFeatures > numFeatures )
       throw std::domain_error("Unable to fulfill requested nFeatures to split upon (value > #columns).");
 
@@ -725,19 +709,8 @@ public:
     bool ilf; // is leaf?
     std::size_t dsn; // decision?
     std::string open_bracket, closed_bracket;
-/*
-Utils::ByLine bl;
-while ( input >> bl ) {
-  std::cout << bl << std::endl;
-  if ( bl == "]" )
-    break;
-}
-return input;
-*/
-std::size_t cntr = 0;
+
     input >> open_bracket;
-std::cout << open_bracket << std::endl;
-++cntr;
     if ( open_bracket.empty() )
       return input; // so annoying
     std::queue<Core*> que;
@@ -747,8 +720,6 @@ std::cout << open_bracket << std::endl;
     input >> dsn;
     Core* parent = new Core(fid, spv, ilf, dsn);
     que.push(parent);
-std::cout << "r: " << fid << " " << spv << " " << ilf << " " << dsn << std::endl;
-++cntr;
     while ( !que.empty() ) {
       parent = que.front();
       Core* left = nullptr;
@@ -759,15 +730,13 @@ std::cout << "r: " << fid << " " << spv << " " << ilf << " " << dsn << std::endl
         input >> ilf;
         input >> dsn;
         left = new Core(fid, spv, ilf, dsn);
-std::cout << " lc: " << fid << " " << spv << " " << ilf << " " << dsn << std::endl;
-++cntr;
+
         input >> fid;
         input >> spv;
         input >> ilf;
         input >> dsn;
         right = new Core(fid, spv, ilf, dsn);
-std::cout << " rc: " << fid << " " << spv << " " << ilf << " " << dsn << std::endl;
-++cntr;
+
         que.push(left);
         que.push(right);
       }
@@ -776,7 +745,6 @@ std::cout << " rc: " << fid << " " << spv << " " << ilf << " " << dsn << std::en
     } // while
 
     input >> closed_bracket;
-std::cout << closed_bracket << std::endl << ++cntr << std::endl;
     return input;
   }
 
@@ -803,21 +771,7 @@ std::cout << closed_bracket << std::endl << ++cntr << std::endl;
                << isleaf << " " << (isleaf ? std::get<DEC>(parent) : na) << std::endl;
       }
     } // for
-/* should never happen, or they'd have children
-    Core const* lchild = std::get<LCHILD>(dtc._nodes.back());
-    if ( lchild ) {
-      bool isleaf = std::get<ILF>(*lchild);
-      output << std::get<FID>(*lchild) << " " << std::get<SPV>(*lchild) << " "
-             << isleaf << " " << (isleaf ? std::get<DEC>(*lchild) : na) << std::endl;
-    }
 
-    Core const* rchild = std::get<RCHILD>(dtc._nodes.back());
-    if ( rchild ) {
-      bool isleaf = std::get<ILF>(*rchild);
-      output << std::get<FID>(*rchild) << " " << std::get<SPV>(*rchild) << " "
-             << isleaf << " " << (isleaf ? std::get<DEC>(*rchild) : na) << std::endl;
-    }
-*/
     output << "]";
     return output;
   }
@@ -843,26 +797,7 @@ protected:
     }
     return std::make_pair(*mn, *mx);
   }
-/*
-  template <typename C>
-  dtype
-  gini(const C& left, const C& right) {
-    dtype class_total = 0, prop_left = 0, prop_right = 0;
-    const dtype nleft = std::accumulate(left.begin(), left.end(), 0);
-    const dtype nright = std::accumulate(right.begin(), right.end(), 0);
-    dtype sum_left = 0, sum_right = 0;
-    for ( std::size_t cls = 0; cls < left.size(); ++cls ) {
-      class_total = left[cls] + right[cls];
-      if ( 0 == class_total )
-        continue;
-      prop_left = left[cls]/class_total;
-      prop_right = right[cls]/class_total;
-      sum_left += (prop_left*(1-prop_left));
-      sum_right += (prop_right*(1-prop_right));
-    } // for
-    return nleft/(nleft+nright)*sum_left + nright/(nleft+nright)*sum_right;
-  }
-*/
+
   template <typename C>
   inline dtype
   gini(const C& c, std::size_t totalSz) {
@@ -878,12 +813,9 @@ protected:
   gini(const C& left, const C& right) {
     const dtype nleft = std::accumulate(left.begin(), left.end(), 0);
     const dtype nright = std::accumulate(right.begin(), right.end(), 0);
-//    const dtype n = nleft + nright;
     return (nleft/(nleft+nright))*gini(left, nleft) + (nright/(nright+nleft))*gini(right, nright);
   }
 
-//sjn need to keep track of whether we include zeroes in the output model of a tree for each applicable feature
-// eventually make this a per-feature thing.  on first iteration, just use 1 bool to apply everywhere
   //===================================
   // return [0] as quality of split
   // return [1] is threshold chosen
@@ -937,7 +869,6 @@ protected:
         }
         dtype gval = gini(nl, nr);
         if ( gval < best_score ) {
-//          std::get<QS>(rtn) = 1-gval;
           std::get<QS>(rtn) = gval;
           std::get<TH>(rtn) = u; // u, not v
           std::get<LP>(rtn) = purity(nl, _dtp._weights);
@@ -968,7 +899,6 @@ protected:
             nl[labels(viter.index())]++;
         } // for
       }
-//      std::get<QS>(rtn) = 1-gini(nl, nr);
       std::get<QS>(rtn) = gini(nl, nr);
       std::get<LP>(rtn) = purity(nl, _dtp._weights);
       std::get<RP>(rtn) = purity(nr, _dtp._weights);
@@ -1078,7 +1008,6 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
     throw std::domain_error("Not supposed to reach here: man_split()");
   }
 
-/*
   std::tuple<featureID, dtype, Monitor, std::tuple<label, dtype>, std::tuple<label, dtype>>
   get_best(const DataMatrix& dm, Monitor mask) {
     dtype currBest = -1;
@@ -1086,8 +1015,8 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
     std::tuple<label, dtype> currLPurity(0,0);
     std::tuple<label, dtype> currRPurity(0,0);
     featureID currCol = 0;
-    std::size_t nxt = mask.find_first();
-    while ( nxt != mask.npos ) {
+    const std::size_t nfeats = dm.size2();
+    for ( std::size_t nxt = 1; nxt < nfeats; ++nxt ) {
       auto val = evaluate(dm, nxt, mask); // return split quality, split value, ldec/lpurity, rdec/rpurity
       if ( std::get<QS>(val) > currBest ) {
         currBest = std::get<QS>(val);
@@ -1098,11 +1027,9 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
         if ( currBest == 1 )
           break;
       }
-    } // while
+    } // for
 
-    if ( currCol == 0 )
-//      throw std::domain_error("something very wrong: find_split()");
-//can happen if allZeroes() with the given mask -> punt...
+    if ( currCol == 0 ) //can happen if allZeroes() with the given mask -> punt...
       return std::make_tuple(1, 0, mask, std::make_tuple(0,0), std::make_tuple(0,0));
 
     const auto& vals = column(dm, currCol);
@@ -1115,15 +1042,15 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
     } // while
     return std::make_tuple(currCol, threshold, mask, currLPurity, currRPurity);
   }
-*/
 
-  // find_split() returns feature ID, split value and monitor showing bit masking -> consider only those set
+  // find_split() returns feature ID, split value and monitor showing bit masking ->
+  //    consider only those set
   //  If stays set on output, split row 'to the right', otherwise it goes to the left
   //  Also return the left and right purities of child nodes
   std::tuple<featureID, dtype, Monitor, std::tuple<label, dtype>, std::tuple<label, dtype>>
   find_split(const DataMatrix& dm, std::size_t nSplitFeatures, Monitor mask) {
-//if ( _dtp._selectSplitNumeric == 1 )
-//return get_best(dm, mask);
+    if ( _dtp._selectSplitNumeric == 1.0 )
+      return get_best(dm, mask);
     const std::size_t numFeatures = dm.size2() - 1; // includes label column
     std::size_t featureCount = 0;
     dtype currBest = -1;
@@ -1131,7 +1058,6 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
     std::tuple<label, dtype> currLPurity(0,0);
     std::tuple<label, dtype> currRPurity(0,0);
     featureID currCol = 0;
-//    std::set<std::size_t> selectedFeats;
     bool done = false;
     Monitor featMask(dm.size2()); // no -1 here
     featMask.set();
@@ -1143,39 +1069,22 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
       static const std::size_t loopy = 50;
       while (true) {
         col = static_cast<featureID>(std::round(_dtp._unif(_dtp._rng) * numFeatures));
-//        if ( col > 0 && selectedFeats.insert(col).second && !allZeroes(dm, col, mask) )
         if ( featMask[col] ) {
           featMask[col] = false;
           if ( !allZeroes(dm, col, mask) )
             break;
         }
         if ( ++save_me > loopy ) {
-//std::cout << "Save!" << std::endl;
           std::size_t nxt = featMask.find_next(lst);
           if ( nxt != featMask.npos ) {
             featMask[col] = false;
             lst = nxt;
             if ( !allZeroes(dm, col, mask) )
               break;
-//            else
-//std::cout << "Not!" << std::endl;
           } else {
             done = true;
             break;
           }
-/*
-          static constexpr std::size_t FID = 0;
-          static constexpr std::size_t MSK = 2;
-          auto expensive = man_split(dm, mask); // force-find; may duplicate element in selectedFeats
-          if ( std::get<MSK>(expensive) == mask ) { // found nothing
-            done = true;
-            break;
-          } else {
-            col = std::get<FID>(expensive);
-            selectedFeats.insert(col);
-            break;
-          }
-*/
         }
       } // while
 
@@ -1198,15 +1107,13 @@ return std::make_tuple(0,0,std::make_tuple(0,0),std::make_tuple(0,0));
 //break;
     } // while
 
-    if ( done ) // && selectedFeats.empty() ) // punt...
+    if ( done )
       return std::make_tuple(1, 0, mask, std::make_tuple(0,0), std::make_tuple(0,0));
 
     std::size_t beg = mask.find_first();
-    if ( currCol == 0 || beg == mask.npos )
-//      throw std::domain_error("something very wrong: find_split()");
-//can happen if allZeroes() with the given mask -> punt...
+    if ( currCol == 0 || beg == mask.npos ) // can happen if allZeroes() with the given mask -> punt...
       return std::make_tuple(1, 0, mask, std::make_tuple(0,0), std::make_tuple(0,0));
-//need to also return the featMask object so that calling routine can pass it back in as a starting point
+//should also return the featMask object so that calling routine can pass it back in as a starting point
     const auto& vals = column(dm, currCol);
     const dtype threshold = currValue;
     while ( beg != mask.npos ) {
