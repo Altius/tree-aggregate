@@ -4,7 +4,7 @@ DFLAGS	= -static -ansi -Wall -std=c++11 -pedantic -O0 -g
 SRCDIR	= src
 BIN	= bin
 
-SOURCE1 = random_forest.cpp
+SOURCE1 = random_forest.bitvector.cpp
 
 .SUFFIXES: .cpp .o
 
@@ -12,12 +12,12 @@ SOURCE1 = random_forest.cpp
 
 prog:
 	mkdir -p $(BIN)
-	$(CC) -o $(BIN)/rf $(FLAGS) $(SRCDIR)/$(SOURCE1)
+	$(CC) -o $(BIN)/rf_bv $(FLAGS) $(SRCDIR)/$(SOURCE1)
 
 debug:
 	mkdir -p $(BIN)
-	$(CC) -o $(BIN)/debug.rf $(DFLAGS) $(SRCDIR)/$(SOURCE1)
+	$(CC) -o $(BIN)/debug.rf_bv $(DFLAGS) $(SRCDIR)/$(SOURCE1)
 
 clean:
-	rm -f $(BIN)/rf
-	rm -f $(BIN)/debug.rf
+	rm -f $(BIN)/rf_bv
+	rm -f $(BIN)/debug.rf_bv
