@@ -1,3 +1,4 @@
 read_data seg faults when in learn mode and there is no label
 multithreading
 expose more options
+don't read in all new data at 1 time during predictions; this can be streamed in/out and separately evaluated.
