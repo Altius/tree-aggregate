@@ -46,7 +46,7 @@ std::string Usage(const std::string& progName) {
   msg += "\n" + progName + " learn [--njobs=<+int>] [--xval=<+real>] [--seed=<+int>] [--nsplit-features=<SQRT|LOG2|+int|+perc>]";
   msg += "\n                     [--min-purity=<+real>] [--split-strategy=<RANDOM|BEST>] <number-trees> <labeled-features>";
   msg += "\n" + progName + " predict [--njobs=<+integer>] <model> <new-features>";
-  msg += "\n" + progName + " Most output goes to stdout.  The result of an optional cross-validation using --xval is sent to stderr.";
+  msg += "\n     (Most output goes to stdout.  The result of an optional cross-validation using --xval is sent to stderr.)";
   return msg;
 }
 
@@ -58,6 +58,7 @@ struct Input {
   Input(int argc, char** argv);
 
   enum class Mode { LEARN, PREDICT };
+  enum class SubMode { PROBABILITY };
 
   Mode _mode;
   bool _oobTests;
@@ -67,14 +68,17 @@ struct Input {
   std::size_t _nFeatures;
   std::size_t _nLabels;
   std::string _modelFile;
-  std::string _dataSource;
+  std::string _dataSourceLearn;
+  std::string _dataSourcePredict;
   Tree::DecisionTreeParameters* _dtp;
+
+  bool _probs;
 
   friend std::ostream&
   operator<<(std::ostream& os, const Input& input) {
     os << "number-jobs=" << input._nJobs;
     os << " " << "number-trees=" << input._nTrees;
-    os << " " << "data-source=" << input._dataSource;
+    os << " " << "data-source=" << input._dataSourceLearn;
     os << " " << "number-features=" << input._nFeatures;
     for ( auto i : Tree::featureMap )
       os << " " << "fid." << i.first << "=" << i.second;
@@ -97,7 +101,7 @@ struct Input {
           else if ( pval[0] == "number-trees" )
             input._nTrees = Utils::convert<decltype(input._nTrees)>(pval[1], Utils::Nums::PLUSINT_NOZERO);
           else if ( pval[0] == "data-source" )
-            input._dataSource = pval[1];
+            input._dataSourceLearn = pval[1];
           else if ( pval[0] == "number-features" )
             input._nFeatures = Utils::convert<decltype(input._nFeatures)>(pval[1], Utils::Nums::PLUSINT_NOZERO);
           else if ( pval[0] == "max-label" )
@@ -133,7 +137,7 @@ int main(int argc, char** argv) {
       constexpr std::size_t MXFT = 2;
       constexpr std::size_t MXLB = 3;
       constexpr std::size_t CNTS = 4;
-      auto data = Tree::read_data(input._dataSource, input._oobTests, input._oobPercent);
+      auto data = Tree::read_data(input._dataSourceLearn, input._oobTests, input._oobPercent);
 
       Tree::DecisionTreeParameters& dtp = *input._dtp;
       dtp.set_weights_from_counts(std::get<CNTS>(data));
@@ -159,19 +163,14 @@ int main(int argc, char** argv) {
       }
 */
     } else { // classify new features
-      // returns doublet: Data to be classified and Max Feature ID
-      constexpr std::size_t CLF = 0;
-      constexpr std::size_t MXFT = 1;
-      auto data = Tree::read_data(input._dataSource);
-
       Forest::RandomForest* rf = read_model(input);
-      if ( input._nFeatures < std::get<MXFT>(data) )
-        throw std::domain_error("Data to be classified has more features than were used to do training!");
+      std::ifstream infile(input._dataSourcePredict.c_str());
+      std::istream_iterator<Utils::ByLine> start(infile), eos;
+      if ( input._probs )
+        rf->predict_row_probs(start, eos, input._nFeatures);
+      else
+        rf->predict_row(start, eos, input._nFeatures);
 
-      auto results = rf->predict(std::get<CLF>(data), input._nLabels);
-      std::copy(results.begin(), results.end(), std::ostream_iterator<Tree::label>(std::cout, "\n"));
-
-      delete std::get<CLF>(data);
       delete rf;
     }
 
@@ -214,7 +213,8 @@ Input::Input(int argc, char** argv) : _mode(Mode::LEARN),
                                       _oobPercent(0),
                                       _nJobs(1),
                                       _nTrees(0),
-                                      _dtp(nullptr) {
+                                      _dtp(nullptr),
+                                      _probs(false) {
   using namespace Tree;
 
   for ( int i = 1; i < argc; ++i ) {
@@ -256,6 +256,12 @@ Input::Input(int argc, char** argv) : _mode(Mode::LEARN),
   for ( int i = 2; i < argc; ++i ) {
     auto next = Utils::split(argv[i], "="); // function from dtree.hpp
     if ( next.size() != 2 ) {
+      // avoid nonopt checks for boolean options
+      if ( next[0] == "--probs" ) {
+        _probs = true;
+        continue;
+      }
+
       if ( next.size() != 1 )
         throw std::domain_error("Bad argument: " + std::string(argv[i]));
       nonopt = true;
@@ -266,14 +272,14 @@ Input::Input(int argc, char** argv) : _mode(Mode::LEARN),
         else if ( numnonopt == 1 )
           _nTrees = Utils::convert<decltype(_nTrees)>(next[0], Utils::Nums::PLUSINT_NOZERO);
         else
-          _dataSource = next[0];
+          _dataSourceLearn = next[0];
       } else { // _mode == Mode::PREDICT
         if ( numnonopt > 2 )
           throw std::domain_error("Too many non-option args");
         else if ( numnonopt == 1 )
           _modelFile = next[0];
         else
-          _dataSource = next[0];
+          _dataSourcePredict = next[0];
       }
     } else {
       if ( nonopt ) // options should come before required file inputs
@@ -329,6 +335,9 @@ Input::Input(int argc, char** argv) : _mode(Mode::LEARN),
       }
     }
   } // for
+
+  if ( _mode != Mode::PREDICT && _probs )
+    throw std::domain_error("--probs only works with mode 'predict'");
 
   _dtp = new Tree::DecisionTreeParameters(
                                     criterion, strategy, splitMaxFeat, splitVal,

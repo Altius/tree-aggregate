@@ -83,6 +83,63 @@ struct RandomForest {
     return final;
   }
 
+  // implemented for other machine learning techniques to use Decision Tree outputs as features
+  template <typename Initer>
+  void
+  predict_row_per_tree(Initer start, Initer end, std::size_t maxFeat) const {
+    while ( start != end ) {
+      auto w = *start++;
+      bool first = false;
+      for ( auto& tree : _forest ) {
+        auto val = tree->classify(w, maxFeat);
+        if ( !first )
+          std::cout << " ";
+        std::cout << val;
+        first = false;
+      } // for
+      std::cout << std::endl;
+    } // while
+  }
+
+  template <typename Initer>
+  void
+  predict_row(Initer start, Initer end, std::size_t maxFeat) const {
+    while ( start != end ) {
+      auto w = *start++;
+      std::vector<Tree::label> results(_forest.size(), Tree::label(0));
+      for ( auto& tree : _forest )
+        results[tree->classify(w, maxFeat)] += 1;
+
+      std::cout << static_cast<Tree::label>(std::max_element(results.begin(), results.end()) - results.begin());
+      std::cout << std::endl;
+    } // while
+  }
+
+  template <typename Initer>
+  void
+  predict_row_probs(Initer start, Initer end, std::size_t maxFeat) const {
+    while ( start != end ) {
+      std::string value = *start++;
+      std::map<Tree::label, std::size_t> counts;
+      for ( auto& tree : _forest )
+        counts[tree->classify(value, maxFeat)] += 1; // size_t guaranteed to be 0 by default?
+      double sum = 0.;
+      for ( auto& c : counts )
+        sum += c.second;
+      for ( auto& c : counts )
+        c.second /= sum;
+      std::cout << "(";
+      auto iter = counts.begin();
+      if ( iter != counts.end() ) {
+        std::cout << iter->second;
+        while ( ++iter != counts.end() )
+          std::cout << "," << iter->second;
+      }
+      std::cout << ")" << std::endl;
+      ++start;
+    } // while
+  }
+
   double
   variable_importance() const {
     return 0;

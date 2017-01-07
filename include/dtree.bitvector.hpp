@@ -54,33 +54,12 @@
 #include <boost/numeric/ublas/vector_of_vector.hpp>
 #include <boost/numeric/ublas/vector_proxy.hpp>
 
+#include "dtree-types.hpp"
 #include "utils.hpp"
 
 namespace Tree {
 
 namespace ub = boost::numeric::ublas;
-
-std::string FileFormatVersion = "0.1";
-
-typedef std::size_t featureID;
-typedef unsigned short label;
-typedef float dtype;
-typedef boost::dynamic_bitset<> Monitor;
-
-typedef std::map<boost::dynamic_bitset<>, std::size_t> FeatureMap;
-FeatureMap featureMap;
-
-template <typename T>
-using ColumnVector = ub::vector<T>;
-typedef ub::compressed_vector<dtype> RowVector;
-typedef ColumnVector<RowVector> DataVectorVector;
-typedef ub::generalized_vector_of_vector<dtype, ub::column_major, DataVectorVector> DataMatrix;
-typedef ub::generalized_vector_of_vector<dtype, ub::row_major, DataVectorVector> DataMatrixInv;
-
-enum struct Criterion { GINI, ENTROPY };
-enum struct SplitStrategy { BEST, RANDOM };
-enum struct SplitMaxFeat { INT, FLT, SQRT, LOG2 };
-enum struct ClassWeightType { SAME, BALANCED };
 
 /* Working under the assumption that decision trees will use the same criteria and such
      through a random forest or through svm feature learning on the decision tree decisions.
@@ -434,6 +413,25 @@ struct DecisionTreeClassifier {
       }
     } // for
     throw std::logic_error("Problem with Tree!  See classify()");
+  }
+
+  inline
+  label
+  classify(const std::string& nextLine, std::size_t maxFeat) {
+    if ( _nodes.empty() )
+      throw std::domain_error("Need to learn a model before applying one!");
+
+    std::unordered_map<featureID, dtype> mp;
+    auto mxvalue = get_features(nextLine, ' ', ':', mp);
+    if ( mxvalue > maxFeat )
+      throw std::domain_error("Feature input is greater than what was trained on!");
+    else if ( mp.find(0) != mp.end() )
+      throw std::domain_error("Cannot have a feature-id of 0 during prediction phase");
+
+    RowVector rv(maxFeat, mp.size());
+    for ( auto& i : mp )
+      rv[i.first] = i.second;
+    return classify(rv);
   }
 
 private:

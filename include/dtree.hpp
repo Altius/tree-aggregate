@@ -432,6 +432,25 @@ struct DecisionTreeClassifier {
     throw std::logic_error("Problem with Tree!  See classify()");
   }
 
+  inline
+  label
+  classify(const std::string& nextLine, std::size_t maxFeat) const {
+    if ( _nodes.empty() )
+      throw std::domain_error("Need to learn a model before applying one!");
+
+    std::unordered_map<featureID, dtype> mp;
+    auto mxvalue = get_features(nextLine, ' ', ':', mp);
+    if ( mxvalue > maxFeat )
+      throw std::domain_error("Feature input is greater than what was trained on!");
+    else if ( mp.find(0) != mp.end() )
+      throw std::domain_error("Cannot have a feature-id of 0 during prediction phase");
+
+    RowVector rv(maxFeat, mp.size());
+    for ( auto& i : mp )
+      rv[i.first] = i.second;
+    return classify(rv);
+  }
+
 private:
   static constexpr std::size_t QS = 0;
   static constexpr std::size_t TH = 1;

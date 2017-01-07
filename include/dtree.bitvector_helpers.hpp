@@ -34,14 +34,13 @@
 #include <unordered_map>
 #include <utility>
 
-#include "dtree.bitvector.hpp"
+#include "dtree-types.hpp"
 #include "utils.hpp"
 
 namespace Tree {
 
 inline featureID
 get_features(const std::string& s, char d1, char d2, std::unordered_map<featureID, dtype>& mp) {
-  static constexpr std::size_t LabelID = 0;
   static constexpr dtype zero = dtype(0);
   std::string::size_type pos1 = 0, pos2 = 0, posA = 0;
   std::string next;
@@ -57,7 +56,8 @@ get_features(const std::string& s, char d1, char d2, std::unordered_map<featureI
       if ( labeled )
         throw std::domain_error("Feature does not have a value? " + next);
       labeled = true;
-      mp.insert(std::make_pair(LabelID, Utils::convert<featureID>(next, Utils::Nums::PLUSINT)));
+      featureID fid(0);
+      mp.insert(std::make_pair(fid, Utils::convert<dtype>(next, Utils::Nums::PLUSINT)));
       pos1 = pos2+1;
       continue;
     }
@@ -65,13 +65,11 @@ get_features(const std::string& s, char d1, char d2, std::unordered_map<featureI
     FeatureMap::iterator fid = featureMap.find(boost::dynamic_bitset<>(next.substr(0, posA)));
     if ( fid == featureMap.end() )
       fid = featureMap.insert(std::make_pair(boost::dynamic_bitset<>(next.substr(0, posA)), ++idCount)).first;
-    featureID b = fid->second;
+    featureID b(fid->second);
 
     dtype c = Utils::convert<dtype>(next.substr(posA+1).c_str(), Utils::Nums::REAL);
-    if ( b > maxFeatureID )
-      maxFeatureID = b;
-    else if ( b < 0 )
-      throw std::domain_error("Feature labels must be +int " + next);
+    if ( featureMap.size() > maxFeatureID )
+      maxFeatureID = featureMap.size();
 
     if ( c != zero )
       mp.insert(std::make_pair(b, static_cast<dtype>(c)));
