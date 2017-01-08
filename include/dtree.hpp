@@ -53,30 +53,12 @@
 #include <boost/numeric/ublas/vector_of_vector.hpp>
 #include <boost/numeric/ublas/vector_proxy.hpp>
 
+#include "dtree-types.hpp"
 #include "utils.hpp"
 
 namespace Tree {
 
 namespace ub = boost::numeric::ublas;
-
-std::string FileFormatVersion = "0.1";
-
-typedef unsigned short featureID;
-typedef featureID label;
-typedef float dtype;
-typedef boost::dynamic_bitset<> Monitor;
-
-template <typename T>
-using ColumnVector = ub::vector<T>;
-typedef ub::compressed_vector<dtype> RowVector;
-typedef ColumnVector<RowVector> DataVectorVector;
-typedef ub::generalized_vector_of_vector<dtype, ub::column_major, DataVectorVector> DataMatrix;
-typedef ub::generalized_vector_of_vector<dtype, ub::row_major, DataVectorVector> DataMatrixInv;
-
-enum struct Criterion { GINI, ENTROPY };
-enum struct SplitStrategy { BEST, RANDOM };
-enum struct SplitMaxFeat { INT, FLT, SQRT, LOG2 };
-enum struct ClassWeightType { SAME, BALANCED };
 
 /* Working under the assumption that decision trees will use the same criteria and such
      through a random forest or through svm feature learning on the decision tree decisions.

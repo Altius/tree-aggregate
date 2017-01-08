@@ -34,7 +34,7 @@
 #include <unordered_map>
 #include <utility>
 
-#include "dtree.hpp"
+#include "dtree-types.hpp"
 #include "utils.hpp"
 
 namespace Tree {
@@ -45,7 +45,7 @@ get_features(const std::string& s, char d1, char d2, std::unordered_map<featureI
   static constexpr dtype zero = dtype(0);
   std::string::size_type pos1 = 0, pos2 = 0, posA = 0;
   std::string next;
-  int maxFeatureID = 0;
+  std::size_t maxFeatureID = 0;
   bool labeled = false;
   do {
     pos2 = s.find(d1, pos1);
