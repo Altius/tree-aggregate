@@ -32,6 +32,7 @@
 #include <exception>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <list>
 #include <sstream>
 #include <string>
@@ -47,11 +48,21 @@ struct RandomForest {
 
   // when learning
   RandomForest(Tree::DecisionTreeParameters& dtp, Tree::DataMatrix const* dm, Tree::DataMatrixInv const* oobs)
-    : _dtp(dtp), _dm(dm), _oobs(oobs) {}
+    : _dtp(dtp), _dm(dm), _oobs(oobs), _modelFile(""), _chunksz(0) {}
 
   // when predicting
   explicit RandomForest(Tree::DecisionTreeParameters& dtp)
-    : _dtp(dtp), _dm(nullptr), _oobs(nullptr) {}
+    : _dtp(dtp), _dm(nullptr), _oobs(nullptr), _modelFile(""), _chunksz(0) {}
+
+  // when predicting
+  RandomForest(Tree::DecisionTreeParameters& dtp, const std::string& modfile, std::size_t nModelsPerChunk)
+   : _dtp(dtp), _dm(nullptr), _oobs(nullptr), _modelFile(modfile), _chunksz(nModelsPerChunk) {
+
+    std::ifstream inf(_modelFile.c_str());
+    if ( !inf )
+      throw std::domain_error("Bad model file: " + modfile);
+    inf.close();
+  }
 
   void
   build_trees(std::size_t nTrees) {
@@ -89,7 +100,7 @@ struct RandomForest {
   predict_row_per_tree(Initer start, Initer end, std::size_t maxFeat) const {
     while ( start != end ) {
       auto w = *start++;
-      bool first = false;
+      bool first = true;
       for ( auto& tree : _forest ) {
         auto val = tree->classify(w, maxFeat);
         if ( !first )
@@ -106,12 +117,59 @@ struct RandomForest {
   predict_row(Initer start, Initer end, std::size_t maxFeat) const {
     while ( start != end ) {
       auto w = *start++;
-      std::vector<Tree::label> results(_forest.size(), Tree::label(0));
-      for ( auto& tree : _forest )
-        results[tree->classify(w, maxFeat)] += 1;
+      std::vector<Tree::label> results;
+      for ( auto& tree : _forest ) {
+        Tree::label v = tree->classify(w, maxFeat);
+        if ( std::size_t(v) >= results.size() )
+          results.resize(std::size_t(v+1));
+        results[std::size_t(v)] += 1;
+      } // for
 
       std::cout << static_cast<Tree::label>(std::max_element(results.begin(), results.end()) - results.begin());
       std::cout << std::endl;
+    } // while
+  }
+
+  template <typename Initer>
+  void
+  predict_row_chunked(Initer start, Initer end, std::size_t maxFeat, bool probs) const {
+    std::ifstream mFile(_modelFile.c_str());
+    std::vector<Tree::label> results;
+    while ( start != end ) {
+      auto w = *start++;
+      if ( mFile ) {
+        Tree::DecisionTreeClassifier tmp(_dtp);
+        while ( mFile >> tmp ) {
+          Tree::label v = tmp.classify(w, maxFeat);
+          if ( v >= results.size() )
+            results.resize(v+1, 0);
+          results[v] += 1;
+          tmp._nodes.clear();
+        } // while
+        mFile.clear();
+        mFile.seekg(0);
+        Utils::ByLine bl; // get rid of 2 header lines
+        mFile >> bl;
+        mFile >> bl;
+      } else {
+        throw std::domain_error("Bad model file when classifying " + w);
+      }
+
+      if ( !probs ) {
+        std::cout << static_cast<Tree::label>(std::max_element(results.begin(), results.end()) - results.begin());
+        std::cout << std::endl;
+      } else {
+        double sum = std::accumulate(results.begin(), results.end(), 0.0);
+        std::cout << "(";
+        auto f = results.begin();
+        if ( f != results.end() ) {
+          std::cout << (static_cast<double>(*f)/sum);
+          while ( ++f != results.end() )
+            std::cout << "," << (static_cast<double>(*f)/sum);
+        }
+        std::cout << ")" << std::endl;
+      }
+      results.clear();
     } // while
   }
 
@@ -164,6 +222,8 @@ struct RandomForest {
   Tree::DecisionTreeParameters& _dtp;
   Tree::DataMatrix const* _dm;
   Tree::DataMatrixInv const* _oobs;
+  const std::string& _modelFile;
+  const std::size_t _chunksz;
   std::list<Tree::DecisionTreeClassifier*> _forest;
 };
 

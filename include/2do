@@ -1,4 +1,11 @@
 read_data seg faults when in learn mode and there is no label
 multithreading
 expose more options
-don't read in all new data at 1 time during predictions; this can be streamed in/out and separately evaluated.
+don't read in all tree models at one time during prediction.  Stick to some fixed number.
+  consider making a 2mer instead of 4mer (Core structure) since it switches fields during
+  'isleaf' or not-a-leaf.
+generalize to string labels.
+one major item that will speed up typical cases substantially is to exclude zeroes, even when including them.
+  everything that is a zero will go in one bin or another, all together, and they can all be binned after all
+  other non-zeroes have been arranged around a threshold.  Can still include 0 as a potential threshold when
+  using BEST.

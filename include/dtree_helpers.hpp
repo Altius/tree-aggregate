@@ -41,7 +41,7 @@ namespace Tree {
 
 inline featureID
 get_features(const std::string& s, char d1, char d2, std::unordered_map<featureID, dtype>& mp) {
-  static constexpr std::size_t LabelID = 0;
+  static constexpr featureID LabelID = 0;
   static constexpr dtype zero = dtype(0);
   std::string::size_type pos1 = 0, pos2 = 0, posA = 0;
   std::string next;
